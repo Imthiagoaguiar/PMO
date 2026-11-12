@@ -1,0 +1,8 @@
+Fase;Descrição;Data Início;Data Fim;Responsável;% Conclusão
+Iniciação;Termo de abertura do projeto;01/03/2026;05/03/2026;Ana;100
+Iniciação;Identificação de stakeholders;03/03/2026;07/03/2026;Bruno;100
+Planejamento;EAP e cronograma;10/03/2026;20/03/2026;Ana;80%
+Planejamento;Plano de riscos;15/03/2026;22/03/2026;Carla;50
+Execução;Desenvolvimento do módulo financeiro;25/03/2026;30/05/2026;Diego;10
+Monitoramento;Relatório de status quinzenal;25/03/2026;30/06/2026;Ana;0
+Encerramento;Lições aprendidas;01/07/2026;05/07/2026;Carla;
