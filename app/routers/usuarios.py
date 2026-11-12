@@ -1,4 +1,10 @@
-"""Gestão de usuários (somente Admin). Não há auto-cadastro: quem cria contas é o administrador."""
+"""
+Gestão de usuários (somente Admin).
+
+Contas locais entram com e-mail e senha. Contas do Clerk são pré-cadastradas aqui só com
+e-mail e papel; no primeiro login pelo Clerk com esse e-mail, a conta é vinculada.
+Com CLERK_CADASTRO_AUTOMATICO=false, esse pré-cadastro é a ÚNICA forma de entrar pelo Clerk.
+"""
 
 from typing import Any, Dict, Optional
 
@@ -8,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import auditoria, services
+from app.integracoes import clerk
 from app.database import get_db
 from app.deps import Paginacao, escapar_like, exigir_papel, paginar, salvar
 from app.models import PapelUsuario, ProvedorAuth, Usuario
@@ -25,15 +32,18 @@ def criar_usuario(
     db: Session = Depends(get_db),
     admin: Usuario = Depends(somente_admin),
 ) -> Usuario:
+    if payload.provedor_auth == ProvedorAuth.CLERK and not clerk.habilitado():
+        # Evita criar uma conta que ninguém consegue usar.
+        raise HTTPException(status_code=422, detail="O login pelo Clerk não está configurado (CLERK_EMISSOR).")
     if db.scalar(select(Usuario.id).where(Usuario.email == payload.email)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
 
     usuario = Usuario(
         email=payload.email,
         nome=payload.nome,
-        senha_hash=gerar_hash_senha(payload.senha),
+        senha_hash=gerar_hash_senha(payload.senha) if payload.senha else None,
         papel=payload.papel,
-        provedor_auth=ProvedorAuth.LOCAL,
+        provedor_auth=payload.provedor_auth,
     )
     db.add(usuario)
     try:
@@ -43,7 +53,7 @@ def criar_usuario(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
     auditoria.registrar(
         db, "usuario.criado", "usuario", usuario.id, usuario=admin,
-        detalhes={"email": usuario.email, "papel": usuario.papel},
+        detalhes={"email": usuario.email, "papel": usuario.papel, "provedor": usuario.provedor_auth},
     )
     salvar(db)
     return usuario

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
@@ -338,13 +338,29 @@ class UsuarioRead(UsuarioResumo):
     papel: PapelUsuario
     ativo: bool
     provedor_auth: ProvedorAuth
+    aguardando_primeiro_login: bool = Field(
+        ..., description="Conta externa (Clerk) criada pelo admin que ainda não foi usada"
+    )
 
 
 class UsuarioCreate(BaseModel):
     email: EmailStr
     nome: str = Field(..., min_length=2, max_length=150)
-    senha: str = Field(..., min_length=SENHA_MIN, max_length=SENHA_MAX)
+    provedor_auth: Literal[ProvedorAuth.LOCAL, ProvedorAuth.CLERK] = Field(
+        ProvedorAuth.LOCAL,
+        description="local: entra com e-mail e senha. clerk: entra pelo Clerk com este e-mail (sem senha aqui).",
+    )
+    senha: Optional[str] = Field(None, min_length=SENHA_MIN, max_length=SENHA_MAX)
     papel: PapelUsuario = PapelUsuario.MEMBRO
+
+    @model_validator(mode="after")
+    def _senha_conforme_provedor(self) -> "UsuarioCreate":
+        if self.provedor_auth == ProvedorAuth.LOCAL and self.senha is None:
+            raise ValueError("senha é obrigatória para usuários locais")
+        if self.provedor_auth == ProvedorAuth.CLERK and self.senha is not None:
+            # Senha "esquecida" numa conta do Clerk seria um segundo caminho de login sem uso.
+            raise ValueError("usuários do Clerk não têm senha no PMO: remova o campo senha")
+        return self
 
     @field_validator("email")
     @classmethod

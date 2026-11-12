@@ -373,3 +373,58 @@ def test_fluxo_completo_sugestao_da_ia_vira_projeto(client, criar_usuario, login
     tarefas = [t for f in r.json()["fases"] for t in f["tarefas"]]
     assert len(tarefas) == 5
     assert tarefas[-1]["data_fim"] == "2026-05-11"  # 15 dias úteis a partir de 17/04, sem 21/04 e 01/05
+
+
+# ======================= Pré-cadastro de usuários do Clerk =======================
+
+ADMIN = "admin@empresa.com.br"
+NOVO_GERENTE = "novo.gerente@empresa.com.br"
+
+
+def test_admin_pre_cadastra_usuario_do_clerk(client, criar_usuario, login, clerk_ligado, monkeypatch):
+    monkeypatch.setattr(settings, "clerk_cadastro_automatico", False)  # acesso fechado: só pré-cadastrados
+    criar_usuario(ADMIN, PapelUsuario.ADMIN)
+    h_admin = login(ADMIN)
+
+    r = client.post("/usuarios", headers=h_admin, json={
+        "email": NOVO_GERENTE.upper(), "nome": "Novo Gerente", "papel": "gerente", "provedor_auth": "clerk",
+    })
+    assert r.status_code == 201, r.text
+    criado = r.json()
+    assert (criado["email"], criado["provedor_auth"], criado["aguardando_primeiro_login"]) == (
+        NOVO_GERENTE, "clerk", True)
+
+    # Sem senha no PMO: o login local não é um caminho de entrada para essa conta.
+    assert client.post("/auth/login", data={"username": NOVO_GERENTE, "password": "qualquer-coisa"}).status_code == 401
+
+    # Primeiro login pelo Clerk: vincula a conta e já entra com o papel definido pelo admin.
+    h = _token_clerk(sub="user_gerente", primaryEmail=NOVO_GERENTE, fullName="Nome Vindo do Clerk")
+    me = client.get("/auth/me", headers=h).json()
+    assert (me["id"], me["papel"], me["nome"]) == (criado["id"], "gerente", "Novo Gerente")
+    assert client.post("/projetos/manual", json={"nome_projeto": "ERP"}, headers=h).status_code == 201
+
+    listagem = client.get("/usuarios?busca=novo.gerente", headers=h_admin).json()["itens"]
+    assert listagem[0]["aguardando_primeiro_login"] is False
+
+    # Quem não foi pré-cadastrado continua barrado.
+    assert client.get("/auth/me", headers=_token_clerk(sub="user_x", primaryEmail="x@empresa.com.br")).status_code == 403
+
+
+@pytest.mark.parametrize("extra", [
+    pytest.param({"provedor_auth": "clerk", "senha": "SenhaForte!2026"}, id="clerk-com-senha"),
+    pytest.param({"provedor_auth": "local"}, id="local-sem-senha"),
+    pytest.param({"provedor_auth": "google"}, id="provedor-nao-suportado"),
+])
+def test_pre_cadastro_invalido(client, criar_usuario, login, clerk_ligado, extra):
+    criar_usuario(ADMIN, PapelUsuario.ADMIN)
+    r = client.post("/usuarios", headers=login(ADMIN), json={"email": NOVO_GERENTE, "nome": "Novo", **extra})
+    assert r.status_code == 422
+
+
+def test_pre_cadastro_clerk_exige_clerk_configurado(client, criar_usuario, login, monkeypatch):
+    monkeypatch.setattr(settings, "clerk_emissor", None)
+    criar_usuario(ADMIN, PapelUsuario.ADMIN)
+    r = client.post("/usuarios", headers=login(ADMIN),
+                    json={"email": NOVO_GERENTE, "nome": "Novo", "provedor_auth": "clerk"})
+    assert r.status_code == 422
+    assert "Clerk" in r.json()["detail"]

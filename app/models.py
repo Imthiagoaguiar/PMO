@@ -86,6 +86,11 @@ class Usuario(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
+    @property
+    def aguardando_primeiro_login(self) -> bool:
+        """Conta externa cadastrada pelo admin que ainda não foi ligada à identidade do provedor."""
+        return self.provedor_auth != ProvedorAuth.LOCAL and self.provedor_sub is None
+
     __table_args__ = (
         UniqueConstraint("provedor_auth", "provedor_sub", name="uq_usuario_provedor_sub"),
         CheckConstraint(
