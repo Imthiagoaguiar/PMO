@@ -4,7 +4,8 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.models import PapelUsuario, ProvedorAuth, StatusProjeto
+from app.models import FASES_WATERFALL, PapelUsuario, ProvedorAuth, StatusProjeto
+from app.texto import normalizar
 
 # NIST 800-63B: comprimento importa mais que regras de "caractere especial".
 # Limite máximo evita DoS com senhas gigantes no Argon2.
@@ -26,15 +27,59 @@ FORMATOS_DATA = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y", "%Y-%m-%d %H:%M
 # ---------- Entrada ----------
 
 
+MAX_TAREFAS_NA_CRIACAO = 300
+_FASE_POR_NOME = {normalizar(f): f for f in FASES_WATERFALL}
+
+
+class TarefaNova(BaseModel):
+    descricao: str = Field(..., min_length=1, max_length=500)
+    duracao_dias_uteis: Optional[int] = Field(None, ge=1, le=1000)
+    responsavel: Optional[str] = Field(None, max_length=150)
+
+    @field_validator("descricao", "responsavel", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+
+class FaseNova(BaseModel):
+    fase: str = Field(..., description="Um dos 5 nomes do Waterfall (aceita sem acento/maiúsculas)")
+    tarefas: List[TarefaNova] = Field(default_factory=list, max_length=100)
+
+    @field_validator("fase")
+    @classmethod
+    def _fase_oficial(cls, v: str) -> str:
+        oficial = _FASE_POR_NOME.get(normalizar(v))
+        if oficial is None:
+            raise ValueError(f"fase inválida: use uma de {', '.join(FASES_WATERFALL)}")
+        return oficial
+
+
 class ProjetoManualCreate(BaseModel):
     nome_projeto: str = Field(..., min_length=3, max_length=200)
     orcamento_aprovado: Optional[Decimal] = Field(None, ge=0, max_digits=14, decimal_places=2)
-    data_inicio: Optional[date] = None
+    data_inicio: Optional[date] = Field(None, description="Também é o início do cronograma encadeado")
+    fases: List[FaseNova] = Field(
+        default_factory=list, max_length=len(FASES_WATERFALL),
+        description="Opcional: tarefas iniciais (o mesmo formato que POST /projetos/ia devolve)",
+    )
 
     @field_validator("nome_projeto", mode="before")
     @classmethod
     def _strip_nome(cls, v: Any) -> Any:
         return v.strip() if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def _cronograma(self) -> "ProjetoManualCreate":
+        nomes = [f.fase for f in self.fases]
+        if len(nomes) != len(set(nomes)):
+            raise ValueError("cada fase só pode aparecer uma vez em 'fases'")
+        tarefas = [t for f in self.fases for t in f.tarefas]
+        if len(tarefas) > MAX_TAREFAS_NA_CRIACAO:
+            raise ValueError(f"no máximo {MAX_TAREFAS_NA_CRIACAO} tarefas por projeto na criação")
+        if self.data_inicio is None and any(t.duracao_dias_uteis for t in tarefas):
+            raise ValueError("informe data_inicio para calcular as datas das tarefas com duração")
+        return self
 
 
 class TarefaPlanilha(BaseModel):
@@ -243,7 +288,7 @@ class FaseSugerida(BaseModel):
 
 
 class SugestaoProjetoIA(BaseModel):
-    """Sugestão para revisão: nada é gravado. Crie o projeto com /projetos/manual + as tarefas."""
+    """Sugestão para revisão: nada é gravado. Para criar, envie `fases` (editadas ou não) para /projetos/manual."""
 
     nome_projeto: str
     fases: List[FaseSugerida] = Field(..., description="Sempre as 5 fases, na ordem do Waterfall")

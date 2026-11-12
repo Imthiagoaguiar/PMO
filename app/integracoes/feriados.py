@@ -56,6 +56,13 @@ def eh_dia_util(dia: date) -> bool:
     return dia.weekday() < 5 and dia not in feriados_nacionais(dia.year)
 
 
+def proximo_dia_util(dia: date) -> date:
+    """O próprio dia, se for útil; senão o próximo dia útil."""
+    while not eh_dia_util(dia):
+        dia += timedelta(days=1)
+    return dia
+
+
 def calcular_data_fim(inicio: date, dias_uteis: int) -> date:
     """
     Data em que termina uma tarefa de `dias_uteis` dias, contando o próprio dia de início

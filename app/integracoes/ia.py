@@ -3,7 +3,8 @@ Extração de escopo com a Groq: texto do Termo de Abertura -> nome do projeto +
 
 A resposta do modelo é tratada como entrada NÃO confiável: é validada item a item e o que
 não se encaixa (fase inexistente, descrição vazia, duração absurda) é descartado.
-Nada é gravado no banco: o front mostra a sugestão para o gerente revisar antes de criar.
+Nada é gravado no banco: o front mostra a sugestão para o gerente revisar e então a envia,
+no mesmo formato, para POST /projetos/manual (campo "fases").
 """
 
 import json
@@ -12,9 +13,9 @@ from typing import Any, Dict, List, Optional
 
 import groq
 
-from app import services
 from app.config import settings
 from app.models import FASES_WATERFALL
+from app.texto import normalizar
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def _chamar_groq(texto: str) -> str:
 def _limpar_tarefa(item: Any, fases: Dict[str, str]) -> Optional[Dict[str, Any]]:
     if not isinstance(item, dict):
         return None
-    fase = fases.get(services.normalizar(str(item.get("fase", ""))))
+    fase = fases.get(normalizar(str(item.get("fase", ""))))
     descricao = " ".join(str(item.get("descricao") or "").split())[:500]
     if not fase or not descricao:
         return None
@@ -113,7 +114,7 @@ def sugerir_escopo(texto: str) -> Dict[str, Any]:
     brutas = dados.get("tarefas") if isinstance(dados.get("tarefas"), list) else []
 
     # Aceita "Execucao", "EXECUÇÃO" etc. e devolve o nome oficial da fase.
-    fases = {services.normalizar(f): f for f in FASES_WATERFALL}
+    fases = {normalizar(f): f for f in FASES_WATERFALL}
     tarefas = [t for t in (_limpar_tarefa(i, fases) for i in brutas[:MAX_TAREFAS]) if t]
 
     if len(nome) < 3 or not tarefas:

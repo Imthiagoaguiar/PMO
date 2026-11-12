@@ -300,3 +300,76 @@ def test_clerk_usuario_desativado_perde_acesso(client, criar_usuario, login, cle
     me = client.get("/auth/me", headers=_token_clerk()).json()
     client.patch(f"/usuarios/{me['id']}", json={"ativo": False}, headers=login("admin@empresa.com.br"))
     assert client.get("/auth/me", headers=_token_clerk()).status_code == 401
+
+
+# ======================= Criação com cronograma (IA -> /manual) =======================
+
+
+def test_criar_projeto_com_cronograma_encadeado(client, criar_usuario, login, brasil_api, emails):
+    criar_usuario(GERENTE, PapelUsuario.GERENTE)
+    h = login(GERENTE)
+    payload = {
+        "nome_projeto": "ERP",
+        "data_inicio": "2026-04-17",  # sexta
+        "fases": [
+            # Fora de ordem de propósito: o cronograma segue a ordem do Waterfall, não a da lista.
+            {"fase": "EXECUCAO", "tarefas": [{"descricao": "E", "duracao_dias_uteis": 1}]},
+            {"fase": "Iniciação", "tarefas": [{"descricao": "A", "duracao_dias_uteis": 1},
+                                              {"descricao": "B", "duracao_dias_uteis": 2}]},
+            {"fase": "Planejamento", "tarefas": [{"descricao": "C"},  # sem duração: sem datas
+                                                 {"descricao": "D", "duracao_dias_uteis": 1,
+                                                  "responsavel": "Fornecedor X"}]},
+        ],
+    }
+    r = client.post("/projetos/manual", json=payload, headers=h)
+    assert r.status_code == 201, r.text
+
+    detalhe = client.get(f"/projetos/{r.json()['id']}", headers=h).json()
+    datas = {t["descricao"]: (t["data_inicio"], t["data_fim"]) for f in detalhe["fases"] for t in f["tarefas"]}
+    assert datas == {
+        "A": ("2026-04-17", "2026-04-17"),
+        "B": ("2026-04-20", "2026-04-22"),  # pula o fim de semana e o Tiradentes (21/04)
+        "C": (None, None),
+        "D": ("2026-04-23", "2026-04-23"),
+        "E": ("2026-04-24", "2026-04-24"),
+    }
+    assert [t["descricao"] for t in detalhe["fases"][0]["tarefas"]] == ["A", "B"]  # ordem preservada
+    assert detalhe["fases"][1]["tarefas"][1]["responsavel"] == "Fornecedor X"
+
+    historico = client.get(f"/projetos/{r.json()['id']}/historico", headers=h).json()["itens"]
+    assert historico[-1]["detalhes"]["tarefas"] == 5
+    assert len(emails) == 1  # e-mail continua saindo uma vez só
+
+
+@pytest.mark.parametrize("fases, data_inicio", [
+    pytest.param([{"fase": "Fase Inventada", "tarefas": []}], "2026-04-17", id="fase-inexistente"),
+    pytest.param([{"fase": "Iniciação"}, {"fase": "iniciacao"}], "2026-04-17", id="fase-repetida"),
+    pytest.param([{"fase": "Iniciação", "tarefas": [{"descricao": "A", "duracao_dias_uteis": 2}]}], None,
+                 id="duracao-sem-data-inicio"),
+    pytest.param([{"fase": "Iniciação", "tarefas": [{"descricao": "  "}]}], None, id="descricao-vazia"),
+])
+def test_criar_projeto_com_cronograma_invalido(client, criar_usuario, login, fases, data_inicio):
+    criar_usuario(GERENTE, PapelUsuario.GERENTE)
+    h = login(GERENTE)
+    r = client.post("/projetos/manual", json={"nome_projeto": "ERP", "data_inicio": data_inicio, "fases": fases}, headers=h)
+    assert r.status_code == 422
+    assert client.get("/projetos", headers=h).json()["total"] == 0  # tudo ou nada
+
+
+def test_fluxo_completo_sugestao_da_ia_vira_projeto(client, criar_usuario, login, monkeypatch, brasil_api):
+    criar_usuario(GERENTE, PapelUsuario.GERENTE)
+    h = login(GERENTE)
+    _resposta_ia(monkeypatch, {"nome_projeto": "ERP Financeiro", "tarefas": [
+        {"fase": fase, "descricao": f"Tarefa de {fase}", "duracao_dias_uteis": 3}
+        for fase in ("Iniciação", "Planejamento", "Execução", "Monitoramento", "Encerramento")
+    ]})
+    sugestao = client.post("/projetos/ia", json={"texto": TEXTO_TAP}, headers=h).json()
+
+    # O front envia a sugestão de volta, sem transformar o formato.
+    r = client.post("/projetos/manual", headers=h, json={
+        "nome_projeto": sugestao["nome_projeto"], "data_inicio": "2026-04-17", "fases": sugestao["fases"],
+    })
+    assert r.status_code == 201, r.text
+    tarefas = [t for f in r.json()["fases"] for t in f["tarefas"]]
+    assert len(tarefas) == 5
+    assert tarefas[-1]["data_fim"] == "2026-05-11"  # 15 dias úteis a partir de 17/04, sem 21/04 e 01/05

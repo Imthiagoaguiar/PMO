@@ -66,12 +66,17 @@ def criar_projeto_manual(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(pode_criar_projeto),
 ) -> ProjetoRead:
-    """Modo 1: cria o projeto do zero, já com as 5 fases do Waterfall."""
-    projeto = services.criar_projeto_com_fases(db, usuario, **payload.model_dump())
+    """
+    Modo 1: cria o projeto do zero, já com as 5 fases do Waterfall.
+    Opcionalmente recebe as tarefas iniciais em `fases` (ex.: a sugestão revisada do /projetos/ia).
+    Tarefas com `duracao_dias_uteis` ganham datas encadeadas a partir de `data_inicio`.
+    """
+    projeto = services.criar_projeto_com_fases(db, usuario, **payload.model_dump(exclude={"fases"}))
+    total_tarefas = services.adicionar_cronograma(projeto, payload.fases, payload.data_inicio)
     db.flush()  # gera o id para a auditoria
     auditoria.registrar(
         db, "projeto.criado", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id,
-        detalhes={"modo": "manual", "nome_projeto": projeto.nome_projeto},
+        detalhes={"modo": "manual", "nome_projeto": projeto.nome_projeto, "tarefas": total_tarefas},
     )
     salvar(db)
     _avisar_por_email(tarefas_fundo, usuario, projeto)
@@ -86,8 +91,8 @@ def sugerir_projeto_com_ia(
 ) -> Dict[str, Any]:
     """
     Modo 3: lê o Termo de Abertura e sugere nome + tarefas nas 5 fases (Groq).
-    Não grava nada: o gerente revisa no front e cria com /projetos/manual + POST de tarefas
-    (usando `duracao_dias_uteis` para o back calcular as datas com os feriados).
+    Não grava nada: o gerente revisa no front e envia `fases` para POST /projetos/manual,
+    que cria tudo de uma vez e calcula as datas com os feriados.
     """
     try:
         sugestao = ia.sugerir_escopo(payload.texto)

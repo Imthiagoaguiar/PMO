@@ -2,9 +2,8 @@
 
 import io
 import logging
-import unicodedata
 import zipfile
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
@@ -17,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app import auditoria
 from app.config import settings
+from app.integracoes.feriados import calcular_data_fim, proximo_dia_util
 from app.models import (
     FASES_WATERFALL,
     Fase,
@@ -28,8 +28,9 @@ from app.models import (
     Tarefa,
     Usuario,
 )
-from app.schemas import FaseIndicadores, ProjetoIndicadores, TarefaPlanilha
+from app.schemas import FaseIndicadores, FaseNova, ProjetoIndicadores, TarefaPlanilha
 from app.security import agora_utc
+from app.texto import normalizar
 
 if TYPE_CHECKING:
     from app.integracoes.clerk import IdentidadeClerk
@@ -67,12 +68,6 @@ class PlanilhaInvalida(Exception):
         self.erros = erros or []
 
 
-def normalizar(texto: str) -> str:
-    """'  Iniciação ' -> 'iniciacao'. Usado para casar fases e cabeçalhos sem depender de acento/caixa."""
-    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
-    return sem_acento.strip().lower()
-
-
 # ---------- Modo 1 e base do Modo 2 ----------
 
 
@@ -100,6 +95,28 @@ def criar_projeto_com_fases(
     projeto.membros = [ProjetoMembro(usuario=dono)]
     db.add(projeto)
     return projeto
+
+
+def adicionar_cronograma(projeto: Projeto, fases: List[FaseNova], inicio: Optional[date]) -> int:
+    """
+    Distribui as tarefas nas fases e encadeia as datas na ordem do Waterfall: cada tarefa com
+    duração começa no dia útil seguinte ao fim da anterior (pulando fins de semana e feriados).
+    Tarefas sem duração entram sem datas e não empurram o cronograma. Retorna o total de tarefas.
+    """
+    fases_por_titulo = {f.titulo: f for f in projeto.fases}
+    ordem = {titulo: i for i, titulo in enumerate(FASES_WATERFALL)}
+    cursor = inicio
+    total = 0
+    for fase in sorted(fases, key=lambda f: ordem[f.fase]):
+        for nova in fase.tarefas:
+            tarefa = Tarefa(descricao=nova.descricao, responsavel=nova.responsavel)
+            if nova.duracao_dias_uteis is not None and cursor is not None:
+                tarefa.data_inicio = proximo_dia_util(cursor)
+                tarefa.data_fim = calcular_data_fim(tarefa.data_inicio, nova.duracao_dias_uteis)
+                cursor = tarefa.data_fim + timedelta(days=1)
+            fases_por_titulo[fase.fase].tarefas.append(tarefa)
+            total += 1
+    return total
 
 
 # ---------- Sessões ----------
