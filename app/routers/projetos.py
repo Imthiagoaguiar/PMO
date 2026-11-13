@@ -13,7 +13,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from app import auditoria, idempotencia, services
+from app import auditoria, idempotencia, relatorio, services, tempo
 from app.database import get_db
 from app.integracoes import ia, notificacoes
 from app.deps import (
@@ -35,6 +35,7 @@ from app.deps import (
 )
 from app.models import (
     Auditoria,
+    Comentario,
     Fase,
     PapelUsuario,
     Projeto,
@@ -43,7 +44,7 @@ from app.models import (
     Tarefa,
     Usuario,
 )
-from app.rate_limit import limite_ia, limite_importacao
+from app.rate_limit import limite_ia, limite_importacao, limite_relatorio
 from app.schemas import (
     MembroAlterar,
     MembroRead,
@@ -260,7 +261,7 @@ def importar_projeto(
     db.flush()
     auditoria.registrar(
         db, "projeto.importado", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id,
-        detalhes={"arquivo": (arquivo.filename or "")[:200], "tarefas": len(tarefas)},
+        detalhes={"arquivo": (arquivo.filename or "").replace("\x00", "")[:200], "tarefas": len(tarefas)},
     )
     gravado = _gravar_criacao(db, usuario, projeto, chave, rota, hash_corpo, response)
     if gravado is projeto:
@@ -330,6 +331,53 @@ def exportar_projeto(
         content=conteudo,
         media_type=MIME_XLSX,
         headers={"Content-Disposition": _content_disposition(projeto.nome_projeto + ".xlsx")},
+    )
+
+
+@router.get(
+    "/{projeto_id}/relatorio",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}, "description": "Relatório do projeto em PDF"}},
+)
+def relatorio_pdf(
+    projeto_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+) -> Response:
+    """
+    Resumo e indicadores, pilares (farol, andamento, orçado x realizado), linha do tempo,
+    histórico e comentários recentes. Qualquer membro pode gerar (inclusive visualizador).
+    """
+    limite_relatorio.por_usuario(usuario.id)
+    projeto = obter_projeto_visivel(db, projeto_id, usuario, carregar_tarefas=True)
+    historico = db.scalars(
+        select(Auditoria).options(selectinload(Auditoria.usuario))
+        .where(Auditoria.projeto_id == projeto.id)
+        .order_by(Auditoria.criado_em.desc(), Auditoria.id.desc()).limit(30)
+    ).all()
+    comentarios = db.scalars(
+        select(Comentario).options(selectinload(Comentario.autor), selectinload(Comentario.tarefa))
+        .where(Comentario.projeto_id == projeto.id)
+        .order_by(Comentario.criado_em.desc(), Comentario.id.desc()).limit(20)
+    ).all()
+    hoje = tempo.hoje()
+    conteudo = relatorio.gerar_pdf(relatorio.DadosRelatorio(
+        projeto=projeto,
+        dono=projeto.dono.nome,
+        indicadores=services.calcular_indicadores(projeto, hoje),
+        pilares=services.calcular_pilares(projeto, services.listar_pilares(db, projeto.id), hoje),
+        historico=historico,
+        comentarios=comentarios,
+        gerado_por=usuario.nome,
+        agora_utc=tempo.agora_utc(),
+        hoje=hoje,
+    ))
+    auditoria.registrar(db, "projeto.relatorio_pdf", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id)
+    salvar(db)
+    return Response(
+        content=conteudo,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _content_disposition(f"Relatório - {projeto.nome_projeto}.pdf")},
     )
 
 

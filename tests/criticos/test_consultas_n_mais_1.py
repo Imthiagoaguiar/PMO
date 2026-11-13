@@ -20,6 +20,11 @@ from app.models import PapelUsuario
 
 GERENTE = "gerente@empresa.com.br"
 TETO_DE_QUERIES = 8
+# Rotas que juntam muita coisa numa resposta só: orçamento próprio (ainda fixo, independente de N).
+TETO_POR_ROTA = {
+    "/projetos/{id}/pilares": 9,     # + pilares e quem avaliou cada um
+    "/projetos/{id}/relatorio": 16,  # indicadores, pilares, histórico, comentários (autores e tarefas) e auditoria
+}
 
 
 @contextmanager
@@ -48,11 +53,14 @@ def montar(client, criar_usuario, login, brasil_api) -> Callable[[int], Dict]:
         p = client.post("/projetos/manual", json={"nome_projeto": f"Projeto {contador['projetos']}"}, headers=h).json()
         pid = p["id"]
         fases = [f["id"] for f in p["fases"]]
+        pilares = [x["id"] for x in p["pilares"]]
+        for pilar in pilares:  # status com autor: o PDF e a lista mostram quem avaliou
+            client.patch(f"/projetos/{pid}/pilares/{pilar}", json={"farol": "verde", "status_texto": "ok"}, headers=h)
         for i in range(n):
             pessoa = criar_usuario(f"p{contador['projetos']}-{i}@empresa.com.br")
             client.post(f"/projetos/{pid}/membros", json={"usuario_id": pessoa.id, "papel": "editor"}, headers=h)
             tarefa = client.post(f"/projetos/{pid}/fases/{fases[i % 5]}/tarefas", json={
-                "descricao": f"Tarefa {i}", "responsavel_id": pessoa.id,
+                "descricao": f"Tarefa {i}", "responsavel_id": pessoa.id, "pilar_id": pilares[i % len(pilares)],
                 "data_inicio": "2026-03-02", "data_fim": "2026-03-06", "percentual_conclusao": i % 101,
             }, headers=h).json()
             client.post(f"/projetos/{pid}/comentarios", json={"texto": f"c{i}", "tarefa_id": tarefa["id"]}, headers=h)
@@ -65,6 +73,8 @@ ROTAS = [
     "/projetos/{id}",
     "/projetos/{id}/indicadores",
     "/projetos/{id}/exportar",
+    "/projetos/{id}/pilares",
+    "/projetos/{id}/relatorio",
     "/projetos/{id}/membros",
     "/projetos/{id}/comentarios?limite=100",
     "/projetos/{id}/historico?limite=100",
@@ -85,13 +95,14 @@ def test_queries_nao_crescem_com_a_quantidade_de_dados(client, montar, rota):
     pequeno, grande = montar(2), montar(50)
     poucas, muitas = _queries(client, pequeno, rota), _queries(client, grande, rota)
     assert muitas == poucas, f"{rota}: {poucas} queries com 2 itens, {muitas} com 50 (N+1)"
-    assert muitas <= TETO_DE_QUERIES, f"{rota}: {muitas} queries (teto {TETO_DE_QUERIES})"
+    teto = TETO_POR_ROTA.get(rota, TETO_DE_QUERIES)
+    assert muitas <= teto, f"{rota}: {muitas} queries (teto {teto})"
 
 
 def test_detalhe_do_projeto_carrega_tudo_em_poucas_queries(client, montar):
-    """GET /projetos/{id} com 50 tarefas: usuário + projeto + fases + tarefas + responsáveis + membros."""
+    """GET /projetos/{id} com 50 tarefas: usuário + projeto + membros + fases + tarefas + responsáveis + pilares."""
     projeto = montar(50)
     with contar_queries() as comandos:
         r = client.get(f"/projetos/{projeto['id']}", headers=projeto["h"])
     assert sum(len(f["tarefas"]) for f in r.json()["fases"]) == 50
-    assert len(comandos) <= 6, "\n\n".join(comandos)
+    assert len(comandos) <= 7, "\n\n".join(comandos)

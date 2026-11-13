@@ -8,8 +8,8 @@ from sqlalchemy import text
 from app.auditoria import ip_requisicao
 from app.config import settings
 from app.database import engine
-from app.limites import KB, MB, LimiteCorpo
-from app.routers import auditoria, auth, comentarios, projetos, tarefas, usuarios
+from app.limites import KB, MB, LimiteCorpo, RecusaNul
+from app.routers import auditoria, auth, comentarios, pilares, projetos, tarefas, usuarios
 
 EM_PRODUCAO = settings.ambiente == "prod"
 
@@ -41,6 +41,8 @@ app.add_middleware(
 
 # JSON comum: 1 MB sobra (300 tarefas com descrição longa dão ~200 KB).
 # Importação: 5 MB de planilha + a sobra do multipart.
+# Ordem: o último adicionado é o mais externo. LimiteCorpo corta o tamanho ANTES de o RecusaNul ler o corpo.
+app.add_middleware(RecusaNul)
 app.add_middleware(LimiteCorpo, padrao=1 * MB, por_rota={"/projetos/importar": 5 * MB + 64 * KB})
 
 
@@ -82,4 +84,5 @@ app.include_router(projetos.router)
 app.include_router(tarefas.router)
 app.include_router(tarefas.minhas_router)
 app.include_router(comentarios.router)
+app.include_router(pilares.router)
 app.include_router(auditoria.router)

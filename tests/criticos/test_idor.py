@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import select
 
 from app.main import app
-from app.models import Auditoria, Comentario, Fase, PapelUsuario, Projeto, ProjetoMembro, Tarefa
+from app.models import Auditoria, Comentario, Fase, PapelUsuario, Pilar, Projeto, ProjetoMembro, Tarefa
 from tests.conftest import SENHA
 
 DONO, INTRUSO, LEITOR, ADMIN = "dono@a.com.br", "intruso@b.com.br", "leitor@a.com.br", "admin@a.com.br"
@@ -42,6 +42,8 @@ CORPOS = {  # corpos válidos: o 404 tem de vir da AUTORIZAÇÃO, não de um 422
     ("PATCH", "/projetos/{projeto_id}/membros/{usuario_id}"): {"papel": "editor"},
     ("POST", "/projetos/{projeto_id}/comentarios"): {"texto": "invasão"},
     ("PATCH", "/projetos/{projeto_id}/comentarios/{comentario_id}"): {"texto": "invasão"},
+    ("POST", "/projetos/{projeto_id}/pilares"): {"nome": "Invasão"},
+    ("PATCH", "/projetos/{projeto_id}/pilares/{pilar_id}"): {"farol": "vermelho", "status_texto": "invadido"},
 }
 
 
@@ -64,12 +66,12 @@ def cenario(client, criar_usuario, login) -> Dict:
                              headers=h["dono"]).json()
     client.post(f"/projetos/{pid}/membros", json={"usuario_id": ids["leitor"]}, headers=h["dono"])
     return {"h": h, "ids": ids, "projeto_id": pid, "fase_id": fase_id, "tarefa_id": tarefa["id"],
-            "comentario_id": comentario["id"]}
+            "comentario_id": comentario["id"], "pilar_id": projeto["pilares"][0]["id"]}
 
 
 def _url(caminho: str, c: Dict, projeto_id: int) -> str:
     valores = {"projeto_id": projeto_id, "fase_id": c["fase_id"], "tarefa_id": c["tarefa_id"],
-               "comentario_id": c["comentario_id"], "usuario_id": c["ids"]["leitor"]}
+               "comentario_id": c["comentario_id"], "usuario_id": c["ids"]["leitor"], "pilar_id": c["pilar_id"]}
     return re.sub(r"\{(\w+)\}", lambda m: str(valores[m.group(1)]), caminho)
 
 
@@ -82,6 +84,7 @@ def _foto_do_banco(db) -> tuple:
         [(c.id, c.texto) for c in db.scalars(select(Comentario))],
         sorted((m.projeto_id, m.usuario_id, m.papel) for m in db.scalars(select(ProjetoMembro))),
         db.query(Fase).count(),
+        sorted((x.id, x.nome, x.farol, x.status_texto) for x in db.scalars(select(Pilar))),
     )
 
 
@@ -167,6 +170,14 @@ def test_mover_tarefa_para_fase_de_outro_projeto(client, cenario, projeto_do_int
     assert client.patch(url, json={"fase_id": projeto_do_intruso["fase_id"]}, headers=c["h"]["dono"]).status_code == 404
     db.expire_all()
     assert db.get(Tarefa, c["tarefa_id"]).fase_id == c["fase_id"]
+
+
+def test_pilar_de_outro_projeto_na_tarefa(client, cenario, projeto_do_intruso):
+    """O dono do projeto do intruso tenta pendurar uma tarefa dele num pilar do projeto alheio."""
+    c, meu = cenario, projeto_do_intruso
+    tarefa = client.post(f"/projetos/{meu['id']}/fases/{meu['fase_id']}/tarefas",
+                         json={"descricao": "x", "pilar_id": c["pilar_id"]}, headers=c["h"]["intruso"])
+    assert tarefa.status_code == 422
 
 
 def test_responsavel_de_fora_do_projeto(client, cenario):

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { ArrowLeft, Download, Eye, Lock, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
+import { ArrowLeft, Download, Eye, FileText, Lock, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
 import { useState, type FormEvent } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
@@ -10,6 +10,7 @@ import { Cronograma } from "@/components/projeto/Cronograma"
 import { Historico } from "@/components/projeto/Historico"
 import { LinhaDoTempo } from "@/components/projeto/LinhaDoTempo"
 import { Membros } from "@/components/projeto/Membros"
+import { Pilares } from "@/components/projeto/Pilares"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -129,6 +130,7 @@ export function ProjetoDetalhe() {
   const [editando, setEditando] = useState(false)
   const [excluindo, setExcluindo] = useState(false)
   const [exportando, setExportando] = useState(false)
+  const [gerandoPdf, setGerandoPdf] = useState(false)
 
   const mudarStatus = useMutation({
     mutationFn: (status: StatusProjeto) =>
@@ -154,6 +156,17 @@ export function ProjetoDetalhe() {
     },
     onError: fmt.notificarErro,
   })
+
+  async function gerarPdf() {
+    setGerandoPdf(true)
+    try {
+      await baixarArquivo(`/projetos/${id}/relatorio`, "relatorio.pdf")
+    } catch (erro) {
+      fmt.notificarErro(erro)
+    } finally {
+      setGerandoPdf(false)
+    }
+  }
 
   async function exportar() {
     setExportando(true)
@@ -215,6 +228,9 @@ export function ProjetoDetalhe() {
               </SelectContent>
             </Select>
           )}
+          <Button variant="outline" onClick={gerarPdf} disabled={gerandoPdf}>
+            <FileText /> {gerandoPdf ? "Gerando PDF..." : "Relatório PDF"}
+          </Button>
           <Button variant="outline" onClick={exportar} disabled={exportando}>
             <Download /> {exportando ? "Exportando..." : "Exportar Excel"}
           </Button>
@@ -284,6 +300,7 @@ export function ProjetoDetalhe() {
       <Tabs defaultValue="cronograma">
         <TabsList className="mb-4">
           <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
+          <TabsTrigger value="pilares">Pilares</TabsTrigger>
           <TabsTrigger value="linha">Linha do tempo</TabsTrigger>
           <TabsTrigger value="comentarios">Comentários</TabsTrigger>
           <TabsTrigger value="membros">Membros</TabsTrigger>
@@ -291,6 +308,9 @@ export function ProjetoDetalhe() {
         </TabsList>
         <TabsContent value="cronograma">
           <Cronograma projeto={p} indicadores={ind} membros={membros.data ?? []} podeEditar={podeEditarCronograma} />
+        </TabsContent>
+        <TabsContent value="pilares">
+          <Pilares projetoId={p.id} podeEditar={podeEditarCronograma} />
         </TabsContent>
         <TabsContent value="linha">
           <LinhaDoTempo projeto={p} />

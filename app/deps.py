@@ -176,7 +176,9 @@ def obter_projeto_visivel(
     )
     if carregar_tarefas:
         query = query.options(
-            selectinload(Projeto.fases).selectinload(Fase.tarefas).selectinload(Tarefa.responsavel_usuario)
+            selectinload(Projeto.fases).selectinload(Fase.tarefas).selectinload(Tarefa.responsavel_usuario),
+            # Carregados juntos: tarefa.pilar sai do mapa de identidade, sem 1 query por tarefa.
+            selectinload(Projeto.pilares),
         )
     projeto = db.scalar(filtrar_projetos_visiveis(query, usuario))
     if projeto is None:

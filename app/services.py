@@ -13,14 +13,18 @@ import pandas as pd
 from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import auditoria, tempo
 from app.config import settings
 from app.integracoes.feriados import calcular_data_fim, proximo_dia_util
 from app.models import (
     FASES_WATERFALL,
+    MAX_PILARES,
+    PILARES_PADRAO,
     Fase,
+    FarolPilar,
+    Pilar,
     PapelProjeto,
     PapelUsuario,
     Projeto,
@@ -29,8 +33,9 @@ from app.models import (
     RefreshToken,
     Tarefa,
     Usuario,
+    chave_do_pilar,
 )
-from app.schemas import FaseIndicadores, FaseNova, ProjetoIndicadores, TarefaPlanilha
+from app.schemas import FaseIndicadores, FaseNova, PilarRead, ProjetoIndicadores, TarefaPlanilha, UsuarioResumo
 from app.security import agora_utc
 from app.texto import normalizar
 
@@ -58,6 +63,10 @@ ALIASES_COLUNAS: Dict[str, str] = {
     "percentual": "percentual_conclusao",
     "%_conclusao": "percentual_conclusao",
     "conclusao": "percentual_conclusao",
+    "pilar": "pilar",
+    "frente": "pilar",
+    "frente_de_trabalho": "pilar",
+    "workstream": "pilar",
 }
 CAMPOS_TAREFA = tuple(TarefaPlanilha.model_fields)
 COLUNAS_OBRIGATORIAS = {"fase", "descricao"}
@@ -95,6 +104,7 @@ def criar_projeto_com_fases(
         for ordem, titulo in enumerate(FASES_WATERFALL, start=1)
     ]
     projeto.membros = [ProjetoMembro(usuario=dono, papel=PapelProjeto.EDITOR)]
+    projeto.pilares = [Pilar(nome=nome, ordem=i) for i, nome in enumerate(PILARES_PADRAO)]
     db.add(projeto)
     return projeto
 
@@ -272,13 +282,29 @@ def validar_tarefas(df: pd.DataFrame) -> List[Tuple[int, TarefaPlanilha]]:
 
     if erros:
         raise PlanilhaInvalida("A planilha contém erros de validação.", erros)
+
+    padrao = {chave_do_pilar(n) for n in PILARES_PADRAO}
+    novos = {chave_do_pilar(t.pilar) for _, t in validas if t.pilar} - padrao
+    if len(padrao) + len(novos) > MAX_PILARES:
+        raise PlanilhaInvalida(
+            f"A planilha tem {len(novos)} pilares além dos padrão; o limite é {MAX_PILARES} pilares por projeto."
+        )
     return validas
 
 
 def adicionar_tarefas(projeto: Projeto, tarefas: List[Tuple[int, TarefaPlanilha]]) -> None:
+    """Coluna Pilar: "ti" casa com "TI"; um nome que o projeto não tem vira um pilar novo."""
     fases_por_ordem = {f.ordem_sequencia: f for f in projeto.fases}
+    pilares = {chave_do_pilar(p.nome): p for p in projeto.pilares}
     for ordem, dados in tarefas:
-        fases_por_ordem[ordem].tarefas.append(Tarefa(**dados.model_dump(exclude={"fase"})))
+        tarefa = Tarefa(**dados.model_dump(exclude={"fase", "pilar"}))
+        if dados.pilar:
+            chave = chave_do_pilar(dados.pilar)
+            if chave not in pilares:
+                pilares[chave] = Pilar(nome=" ".join(dados.pilar.split())[:60], ordem=len(pilares))
+                projeto.pilares.append(pilares[chave])
+            tarefa.pilar = pilares[chave]
+        fases_por_ordem[ordem].tarefas.append(tarefa)
 
 
 def _formatar_erro(erro: dict) -> str:
@@ -334,12 +360,56 @@ def calcular_indicadores(projeto: Projeto, hoje: Optional[date] = None) -> Proje
     )
 
 
+def listar_pilares(db: Session, projeto_id: int) -> List[Pilar]:
+    """Pilares do projeto na ordem do editor, já com quem atualizou o status (sem N+1)."""
+    return list(db.scalars(
+        select(Pilar).where(Pilar.projeto_id == projeto_id)
+        .options(selectinload(Pilar.status_atualizado_por))
+        .order_by(Pilar.ordem, Pilar.id)
+    ))
+
+
+def calcular_pilares(projeto: Projeto, pilares: List[Pilar], hoje: Optional[date] = None) -> List[PilarRead]:
+    """Andamento de cada pilar pelas tarefas dele + farol e financeiro. Espera as tarefas carregadas."""
+    hoje = hoje or tempo.hoje()
+    tarefas_por_pilar: Dict[int, List[Tarefa]] = {}
+    for fase in projeto.fases:
+        for t in fase.tarefas:
+            if t.pilar_id is not None:
+                tarefas_por_pilar.setdefault(t.pilar_id, []).append(t)
+
+    resultado = []
+    for p in pilares:
+        tarefas = tarefas_por_pilar.get(p.id, [])
+        orcado, realizado = p.valor_orcado, p.valor_realizado
+        resultado.append(PilarRead(
+            id=p.id, nome=p.nome, ordem=p.ordem, farol=p.farol, status_texto=p.status_texto,
+            status_atualizado_em=p.status_atualizado_em,
+            status_atualizado_por=UsuarioResumo.model_validate(p.status_atualizado_por) if p.status_atualizado_por else None,
+            valor_orcado=orcado, valor_realizado=realizado,
+            desvio=realizado - orcado if orcado is not None and realizado is not None else None,
+            execucao_financeira=(
+                round(float(realizado) / float(orcado) * 100, 1) if orcado and realizado is not None else None
+            ),
+            total_tarefas=len(tarefas),
+            tarefas_concluidas=sum(t.percentual_conclusao == 100 for t in tarefas),
+            tarefas_atrasadas=sum(
+                bool(t.data_fim and t.data_fim < hoje and t.percentual_conclusao < 100) for t in tarefas
+            ),
+            percentual_conclusao=(
+                round(sum(t.percentual_conclusao for t in tarefas) / len(tarefas), 1) if tarefas else 0.0
+            ),
+            versao=p.versao,
+        ))
+    return resultado
+
+
 # ---------- Exportação ----------
 
-COLUNAS_EXPORTACAO = ["Fase", "Descrição", "Data Início", "Data Fim", "Responsável", "% Conclusão"]
+COLUNAS_EXPORTACAO = ["Fase", "Descrição", "Data Início", "Data Fim", "Responsável", "% Conclusão", "Pilar"]
 # Texto que começa com estes caracteres pode ser interpretado como fórmula (Formula Injection).
 CARACTERES_DE_FORMULA = ("=", "+", "-", "@", "\t", "\r")
-COLUNAS_DE_TEXTO = ("B", "E")  # Descrição e Responsável: texto livre digitado pelas pessoas
+COLUNAS_DE_TEXTO = ("B", "E", "G")  # Descrição, Responsável e Pilar: texto livre digitado pelas pessoas
 
 
 def _forcar_texto(celula: Any) -> None:
@@ -363,6 +433,7 @@ def exportar_planilha(projeto: Projeto) -> bytes:
             "Data Fim": tarefa.data_fim,
             "Responsável": tarefa.responsavel_usuario.nome if tarefa.responsavel_usuario else tarefa.responsavel,
             "% Conclusão": tarefa.percentual_conclusao,
+            "Pilar": tarefa.pilar.nome if tarefa.pilar else None,
         }
         for fase in projeto.fases
         for tarefa in fase.tarefas
@@ -373,7 +444,7 @@ def exportar_planilha(projeto: Projeto) -> bytes:
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Cronograma")
         planilha = writer.sheets["Cronograma"]
-        for coluna, largura in zip("ABCDEF", (16, 60, 14, 14, 28, 14)):
+        for coluna, largura in zip("ABCDEFG", (16, 60, 14, 14, 28, 14, 18)):
             planilha.column_dimensions[coluna].width = largura
         for coluna in ("C", "D"):
             for celula in planilha[coluna][1:]:

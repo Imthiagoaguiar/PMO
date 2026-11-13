@@ -31,8 +31,9 @@ from app.config import settings
 from app.cripto import decifrar
 from app.database import engine
 from app.main import app
-from app.models import Auditoria, Fase, PapelUsuario, Projeto, ProjetoMembro, RefreshToken, Tarefa, Usuario
+from app.models import Auditoria, Fase, Pilar, PapelUsuario, Projeto, ProjetoMembro, RefreshToken, Tarefa, Usuario
 from app.routers import auth as rotas_auth
+from app.routers import pilares as pilares_rotas
 from tests.conftest import SENHA
 from tests.criticos.conftest import contar
 
@@ -246,3 +247,34 @@ def test_mesmo_refresh_token_renovado_cinco_vezes_ao_mesmo_tempo(client, criar_u
     db.expire_all()
     ativos = db.scalars(select(RefreshToken).where(RefreshToken.revogado_em.is_(None))).all()
     assert len(ativos) == 1  # uma única sessão nova
+
+
+# ---------- Pilares ----------
+
+
+def test_cinco_avaliacoes_do_mesmo_pilar(client, gerente, projeto, db, monkeypatch):
+    pilar = client.get(f"/projetos/{projeto['id']}/pilares", headers=gerente).json()[0]
+    sincronizar(monkeypatch, auditoria, "aplicar_alteracoes")
+    farois = ["verde", "amarelo", "vermelho", "verde", "amarelo"]
+    respostas = simultaneas([
+        (lambda f: lambda c: c.patch(f"/projetos/{projeto['id']}/pilares/{pilar['id']}",
+                                     json={"farol": f, "status_texto": f"avaliado {f}", "versao": pilar["versao"]},
+                                     headers=gerente))(f) for f in farois
+    ])
+    assert _status(respostas) == [200] + [409] * (N - 1), [r.text for r in respostas]
+    vencedora = next(r.json() for r in respostas if r.status_code == 200)
+    db.expire_all()
+    gravado = db.get(Pilar, pilar["id"])
+    assert (gravado.farol.value, gravado.status_texto) == (vencedora["farol"], vencedora["status_texto"])
+
+
+def test_criar_o_mesmo_pilar_cinco_vezes_com_grafias_diferentes(gerente, projeto, db, monkeypatch):
+    """ "Jurídico", "juridico", "JURÍDICO"... ao mesmo tempo: a unicidade no banco é sobre o nome normalizado."""
+    sincronizar(monkeypatch, pilares_rotas, "_exigir_nome_livre")
+    grafias = ["Jurídico", "juridico", "JURÍDICO", "  Jurídico ", "jurídico"]
+    respostas = simultaneas([
+        (lambda n: lambda c: c.post(f"/projetos/{projeto['id']}/pilares", json={"nome": n}, headers=gerente))(n)
+        for n in grafias
+    ])
+    assert _status(respostas) == [201] + [409] * (N - 1), [r.text for r in respostas]
+    assert contar(db, Pilar, Pilar.projeto_id == projeto["id"], Pilar.nome_chave == "juridico") == 1

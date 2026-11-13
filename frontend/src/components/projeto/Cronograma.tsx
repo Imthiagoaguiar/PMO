@@ -19,6 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/lib/api"
@@ -34,12 +35,19 @@ interface Props {
   podeEditar: boolean
 }
 
+const TODOS = "todos"
+const SEM_PILAR = "sem-pilar"
+
 export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props) {
   const atualizar = useAtualizarProjeto(projeto.id)
   const [editando, setEditando] = useState<{ fase: Fase; tarefa?: Tarefa } | null>(null)
   const [excluindo, setExcluindo] = useState<Tarefa | null>(null)
   const [comentando, setComentando] = useState<Tarefa | null>(null)
   const nomes = new Map(membros.map((m) => [m.id, m.nome]))
+  const nomesPilares = new Map(projeto.pilares.map((p) => [p.id, p.nome]))
+  const [filtroPilar, setFiltroPilar] = useState(TODOS)
+  const visivel = (t: Tarefa) =>
+    filtroPilar === TODOS || (filtroPilar === SEM_PILAR ? t.pilar_id === null : t.pilar_id === Number(filtroPilar))
 
   const excluir = useMutation({
     mutationFn: (t: Tarefa) => api(`/projetos/${projeto.id}/tarefas/${t.id}`, { method: "DELETE" }),
@@ -53,8 +61,28 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
 
   return (
     <div className="grid gap-4">
+      {projeto.pilares.length > 0 && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Pilar:</span>
+          <Select value={filtroPilar} onValueChange={setFiltroPilar}>
+            <SelectTrigger className="w-52" aria-label="Filtrar por pilar">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Todos os pilares</SelectItem>
+              {projeto.pilares.map((p) => (
+                <SelectItem key={p.id} value={String(p.id)}>
+                  {p.nome}
+                </SelectItem>
+              ))}
+              <SelectItem value={SEM_PILAR}>Sem pilar</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       {projeto.fases.map((fase, i) => {
         const ind = indicadores?.fases.find((f) => f.fase_id === fase.id)
+        const tarefas = fase.tarefas.filter(visivel)
         return (
           <Card key={fase.id} className="gap-0 py-0">
             <CardHeader className="border-b py-4">
@@ -78,8 +106,10 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
                 </CardAction>
               )}
             </CardHeader>
-            {fase.tarefas.length === 0 ? (
-              <p className="px-6 py-4 text-sm text-muted-foreground">Nenhuma tarefa nesta fase.</p>
+            {tarefas.length === 0 ? (
+              <p className="px-6 py-4 text-sm text-muted-foreground">
+                {fase.tarefas.length === 0 ? "Nenhuma tarefa nesta fase." : "Nenhuma tarefa deste pilar nesta fase."}
+              </p>
             ) : (
               <Table>
                 <TableHeader>
@@ -95,11 +125,18 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {fase.tarefas.map((t) => {
+                  {tarefas.map((t) => {
                     const vencida = fmt.atrasada(t.data_fim, t.percentual_conclusao)
                     return (
                       <TableRow key={t.id}>
-                        <TableCell className="max-w-sm pl-6 whitespace-normal">{t.descricao}</TableCell>
+                        <TableCell className="max-w-sm pl-6 whitespace-normal">
+                          {t.descricao}
+                          {t.pilar_id !== null && nomesPilares.has(t.pilar_id) && (
+                            <Badge variant="outline" className="ml-2 align-middle font-normal">
+                              {nomesPilares.get(t.pilar_id)}
+                            </Badge>
+                          )}
+                        </TableCell>
                         <TableCell className="text-muted-foreground">
                           {(t.responsavel_id && nomes.get(t.responsavel_id)) || t.responsavel || "—"}
                         </TableCell>
@@ -148,6 +185,7 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
           projetoId={projeto.id}
           fases={projeto.fases}
           membros={membros}
+          pilares={projeto.pilares}
           faseInicial={editando.fase}
           tarefa={editando.tarefa}
           aoFechar={() => setEditando(null)}

@@ -6,7 +6,7 @@ from typing import Annotated, Any, Dict, Generic, List, Literal, Optional, TypeV
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.models import FASES_WATERFALL, PapelProjeto, PapelUsuario, ProvedorAuth, StatusProjeto
+from app.models import FASES_WATERFALL, FarolPilar, PapelProjeto, PapelUsuario, ProvedorAuth, StatusProjeto
 from app.texto import normalizar
 
 # NIST 800-63B: comprimento importa mais que regras de "caractere especial".
@@ -109,6 +109,8 @@ class ProjetoManualCreate(BaseModel):
     @field_validator("nome_projeto", mode="before")
     @classmethod
     def _strip_nome(cls, v: Any) -> Any:
+        if isinstance(v, str) and "\x00" in v:  # formulário multipart da importação (o JSON o middleware barra)
+            raise ValueError("caractere inválido (NUL) no nome")
         return v.strip() if isinstance(v, str) else v
 
     @model_validator(mode="after")
@@ -133,14 +135,15 @@ class TarefaPlanilha(BaseModel):
     data_fim: Optional[DataProjeto] = None
     responsavel: Optional[str] = Field(None, max_length=150)
     percentual_conclusao: int = Field(0, ge=0, le=100)
+    pilar: Optional[str] = Field(None, max_length=60)
 
-    @field_validator("fase", "descricao", "responsavel", mode="before")
+    @field_validator("fase", "descricao", "responsavel", "pilar", mode="before")
     @classmethod
     def _texto(cls, v: Any) -> Optional[str]:
         # Excel pode entregar números em colunas de texto; normaliza tudo para str.
         if v is None:
             return None
-        texto = str(v).strip()
+        texto = str(v).replace("\x00", "").strip()  # lixo de exportação de outros sistemas
         return texto or None
 
     @field_validator("data_inicio", "data_fim", mode="before")
@@ -226,6 +229,7 @@ class TarefaCreate(BaseModel):
     data_fim: Optional[DataProjeto] = None
     responsavel: Optional[str] = Field(None, max_length=150, description="Nome livre (pessoa sem conta)")
     responsavel_id: Optional[int] = Field(None, description="Usuário membro do projeto")
+    pilar_id: Optional[int] = Field(None, description="Pilar (frente de trabalho) deste projeto")
     percentual_conclusao: int = Field(0, ge=0, le=100)
     duracao_dias_uteis: Optional[int] = Field(
         None, ge=1, le=1000,
@@ -256,6 +260,7 @@ class TarefaUpdate(BaseModel):
     data_fim: Optional[DataProjeto] = None
     responsavel: Optional[str] = Field(None, max_length=150)
     responsavel_id: Optional[int] = Field(None, description="null remove o responsável")
+    pilar_id: Optional[int] = Field(None, description="null tira a tarefa do pilar")
     percentual_conclusao: Optional[int] = Field(None, ge=0, le=100)
     duracao_dias_uteis: Optional[int] = Field(
         None, ge=1, le=1000,
@@ -289,6 +294,7 @@ class TarefaRead(BaseModel):
     data_fim: Optional[date]
     responsavel: Optional[str]
     responsavel_id: Optional[int]
+    pilar_id: Optional[int] = None
     percentual_conclusao: int
     versao: int = Field(..., description="Envie de volta no PATCH (bloqueio otimista)")
 
@@ -329,8 +335,18 @@ class PermissoesProjeto(BaseModel):
     comentar: bool = True
 
 
+class PilarResumo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    nome: str
+    ordem: int
+    farol: Optional[FarolPilar]
+
+
 class ProjetoRead(ProjetoResumo):
     fases: List[FaseRead]
+    pilares: List[PilarResumo] = []
     permissoes: Optional[PermissoesProjeto] = None
 
 
@@ -532,6 +548,65 @@ class MembroAlterar(BaseModel):
 class MembroRead(UsuarioResumo):
     papel: PapelProjeto
     dono: bool
+
+
+# ---------- Pilares ----------
+
+Dinheiro = Annotated[Decimal, Field(ge=0, max_digits=14, decimal_places=2)]
+
+
+class PilarCreate(BaseModel):
+    nome: str = Field(..., min_length=1, max_length=60)
+    valor_orcado: Optional[Dinheiro] = None
+
+    @field_validator("nome", mode="before")
+    @classmethod
+    def _limpar(cls, v: Any) -> Any:
+        return " ".join(v.split()) if isinstance(v, str) else v
+
+
+class PilarUpdate(BaseModel):
+    nome: Optional[str] = Field(None, min_length=1, max_length=60)
+    ordem: Optional[int] = Field(None, ge=0, le=1000)
+    farol: Optional[FarolPilar] = Field(None, description="null = ainda sem avaliação")
+    status_texto: Optional[str] = Field(None, max_length=1000, description="Situação da frente, em poucas linhas")
+    valor_orcado: Optional[Dinheiro] = None
+    valor_realizado: Optional[Dinheiro] = None
+    versao: Optional[int] = Field(None, ge=1, description="Versão que você editou (409 se alguém salvou depois)")
+
+    @field_validator("nome", mode="before")
+    @classmethod
+    def _limpar_nome(cls, v: Any) -> Any:
+        return (" ".join(v.split()) or None) if isinstance(v, str) else v
+
+    @field_validator("status_texto", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+    @model_validator(mode="after")
+    def _obrigatorios(self) -> "PilarUpdate":
+        _proibir_nulos(self, ("nome", "ordem"))
+        return self
+
+
+class PilarRead(BaseModel):
+    id: int
+    nome: str
+    ordem: int
+    farol: Optional[FarolPilar]
+    status_texto: Optional[str]
+    status_atualizado_em: Optional[InstanteUTC]
+    status_atualizado_por: Optional[UsuarioResumo]
+    valor_orcado: Optional[Decimal]
+    valor_realizado: Optional[Decimal]
+    desvio: Optional[Decimal] = Field(None, description="realizado - orçado (positivo = acima do orçado)")
+    execucao_financeira: Optional[float] = Field(None, description="% do orçado já realizado")
+    total_tarefas: int
+    tarefas_concluidas: int
+    tarefas_atrasadas: int
+    percentual_conclusao: float = Field(..., description="Média do % das tarefas do pilar")
+    versao: int
 
 
 # ---------- Comentários ----------

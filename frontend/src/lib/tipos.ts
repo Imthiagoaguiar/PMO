@@ -45,6 +45,7 @@ export interface Tarefa {
   data_fim: string | null
   responsavel: string | null
   responsavel_id: number | null
+  pilar_id: number | null
   percentual_conclusao: number
   /** Bloqueio otimista: enviar de volta no PATCH (409 se outra pessoa salvou antes). */
   versao: number
@@ -81,8 +82,34 @@ export interface Permissoes {
   comentar: boolean
 }
 
+export type FarolPilar = "verde" | "amarelo" | "vermelho"
+
+export interface PilarResumo {
+  id: number
+  nome: string
+  ordem: number
+  farol: FarolPilar | null
+}
+
+/** Frente de trabalho (TI, Suprimentos, CAPEX, Pessoas...): andamento pelas tarefas + farol + financeiro. */
+export interface Pilar extends PilarResumo {
+  status_texto: string | null
+  status_atualizado_em: string | null
+  status_atualizado_por: { id: number; nome: string; email: string } | null
+  valor_orcado: string | null // Decimal chega como texto
+  valor_realizado: string | null
+  desvio: string | null
+  execucao_financeira: number | null
+  total_tarefas: number
+  tarefas_concluidas: number
+  tarefas_atrasadas: number
+  percentual_conclusao: number
+  versao: number
+}
+
 export interface Projeto extends ProjetoResumo {
   fases: Fase[]
+  pilares: PilarResumo[]
   permissoes: Permissoes | null
 }
 

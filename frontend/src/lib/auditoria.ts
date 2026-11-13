@@ -7,6 +7,10 @@ export const ACOES: Record<string, string> = {
   "projeto.exportado": "exportou o projeto para Excel",
   "projeto.excluido": "excluiu o projeto",
   "projeto.sugestao_ia": "pediu uma sugestão de escopo à IA",
+  "projeto.relatorio_pdf": "gerou o relatório em PDF",
+  "pilar.criado": "criou um pilar",
+  "pilar.atualizado": "atualizou um pilar",
+  "pilar.excluido": "excluiu um pilar",
   "tarefa.criada": "criou uma tarefa",
   "tarefa.atualizada": "atualizou uma tarefa",
   "tarefa.excluida": "excluiu uma tarefa",
@@ -64,6 +68,12 @@ const CAMPOS: Record<string, string> = {
   motivo: "motivo",
   metodo: "método",
   restantes: "códigos restantes",
+  pilar: "pilar",
+  farol: "farol",
+  status_texto: "situação",
+  valor_orcado: "orçado",
+  valor_realizado: "realizado",
+  ordem: "ordem",
 }
 
 function valor(v: unknown): string {

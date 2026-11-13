@@ -62,6 +62,12 @@ def _validar_responsavel(projeto: Projeto, responsavel_id: Optional[int]) -> Non
         )
 
 
+def _validar_pilar(projeto: Projeto, pilar_id: Optional[int]) -> None:
+    if pilar_id is not None and not any(p.id == pilar_id for p in projeto.pilares):
+        # Também impede usar o id de um pilar de OUTRO projeto (IDOR).
+        raise HTTPException(status_code=422, detail="O pilar precisa ser deste projeto.")
+
+
 # ---------- Cronograma do projeto ----------
 
 
@@ -79,6 +85,7 @@ def criar_tarefa(
     exigir_projeto_aberto(projeto)
     fase = _fase_do_projeto(projeto, fase_id)
     _validar_responsavel(projeto, payload.responsavel_id)
+    _validar_pilar(projeto, payload.pilar_id)
 
     dados = payload.model_dump(exclude={"duracao_dias_uteis"})
     if payload.duracao_dias_uteis is not None:
@@ -121,6 +128,8 @@ def atualizar_tarefa(
         _fase_do_projeto(projeto, alteracoes["fase_id"])  # só move dentro do mesmo projeto
     if "responsavel_id" in alteracoes:
         _validar_responsavel(projeto, alteracoes["responsavel_id"])
+    if "pilar_id" in alteracoes:
+        _validar_pilar(projeto, alteracoes["pilar_id"])
 
     diff = auditoria.aplicar_alteracoes(tarefa, alteracoes)
 
@@ -130,6 +139,10 @@ def atualizar_tarefa(
         raise HTTPException(status_code=422, detail="data_fim não pode ser anterior à data_inicio.")
 
     if diff:
+        if "pilar_id" in diff:
+            # No histórico, o NOME do pilar (o id não diz nada a quem lê, e o pilar pode ser excluído depois).
+            nomes = {p.id: p.nome for p in projeto.pilares}
+            diff["pilar"] = [nomes.get(i) for i in diff.pop("pilar_id")]
         auditoria.registrar(
             db, "tarefa.atualizada", "tarefa", tarefa.id, usuario=usuario, projeto_id=projeto.id, detalhes=diff
         )

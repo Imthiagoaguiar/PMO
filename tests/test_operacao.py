@@ -185,7 +185,7 @@ def test_exportar_e_reimportar(client, cenario):
     assert r.headers["content-disposition"].startswith('attachment; filename="ERP.xlsx"')
 
     df = pd.read_excel(io.BytesIO(r.content))
-    assert list(df.columns) == ["Fase", "Descrição", "Data Início", "Data Fim", "Responsável", "% Conclusão"]
+    assert list(df.columns) == ["Fase", "Descrição", "Data Início", "Data Fim", "Responsável", "% Conclusão", "Pilar"]
     assert df.loc[0, "Descrição"] == "=HYPERLINK(\"http://malicioso\")"  # texto intacto...
     celula = openpyxl.load_workbook(io.BytesIO(r.content)).active["B2"]
     assert celula.data_type == "s" and celula.quotePrefix  # ...mas gravado como texto, não fórmula

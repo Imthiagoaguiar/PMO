@@ -10,15 +10,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api, ehConflitoDeVersao } from "@/lib/api"
 import { useAtualizarProjeto } from "@/lib/consultas"
 import { notificarErro } from "@/lib/formato"
-import type { Fase, Membro, Tarefa } from "@/lib/tipos"
+import type { Fase, Membro, PilarResumo, Tarefa } from "@/lib/tipos"
 
 const SEM_RESPONSAVEL = "nenhum"
+const SEM_PILAR = "sem-pilar"
 const TEXTO_LIVRE = "texto"
 
 interface Props {
   projetoId: number
   fases: Fase[]
   membros: Membro[]
+  pilares: PilarResumo[]
   /** Fase onde a tarefa nova será criada. */
   faseInicial: Fase
   /** Se informada, edita esta tarefa. */
@@ -26,7 +28,7 @@ interface Props {
   aoFechar: () => void
 }
 
-export function TarefaDialog({ projetoId, fases, membros, faseInicial, tarefa, aoFechar }: Props) {
+export function TarefaDialog({ projetoId, fases, membros, pilares, faseInicial, tarefa, aoFechar }: Props) {
   const atualizar = useAtualizarProjeto(projetoId)
   const [descricao, setDescricao] = useState(tarefa?.descricao ?? "")
   const [faseId, setFaseId] = useState(String(tarefa?.fase_id ?? faseInicial.id))
@@ -35,6 +37,7 @@ export function TarefaDialog({ projetoId, fases, membros, faseInicial, tarefa, a
   const [dataFim, setDataFim] = useState(tarefa?.data_fim ?? "")
   const [duracao, setDuracao] = useState("")
   const [percentual, setPercentual] = useState(String(tarefa?.percentual_conclusao ?? 0))
+  const [pilar, setPilar] = useState(tarefa?.pilar_id ? String(tarefa.pilar_id) : SEM_PILAR)
   const [responsavel, setResponsavel] = useState(() => {
     if (tarefa?.responsavel_id) return String(tarefa.responsavel_id)
     return tarefa?.responsavel ? TEXTO_LIVRE : SEM_RESPONSAVEL
@@ -48,6 +51,7 @@ export function TarefaDialog({ projetoId, fases, membros, faseInicial, tarefa, a
       percentual_conclusao: Number(percentual),
       responsavel_id: responsavel !== SEM_RESPONSAVEL && responsavel !== TEXTO_LIVRE ? Number(responsavel) : null,
       responsavel: responsavel === TEXTO_LIVRE ? responsavelTexto.trim() || null : null,
+      pilar_id: pilar === SEM_PILAR ? null : Number(pilar),
     }
     if (modoFim === "duracao" && duracao) dados.duracao_dias_uteis = Number(duracao)
     else dados.data_fim = dataFim || null
@@ -106,6 +110,24 @@ export function TarefaDialog({ projetoId, fases, membros, faseInicial, tarefa, a
           <Campo label="Descrição" htmlFor="t-descricao">
             <Input id="t-descricao" required maxLength={500} autoFocus value={descricao} onChange={(e) => setDescricao(e.target.value)} />
           </Campo>
+
+          {pilares.length > 0 && (
+            <Campo label="Pilar">
+              <Select value={pilar} onValueChange={setPilar}>
+                <SelectTrigger className="w-full" aria-label="Pilar">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SEM_PILAR}>Sem pilar</SelectItem>
+                  {pilares.map((p) => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Campo>
+          )}
 
           {tarefa && (
             <Campo label="Fase">

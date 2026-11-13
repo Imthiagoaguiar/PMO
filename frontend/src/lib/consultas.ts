@@ -2,12 +2,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useCallback } from "react"
 
 import { api } from "@/lib/api"
-import type { Indicadores, Membro, Projeto } from "@/lib/tipos"
+import type { Indicadores, Membro, Pilar, Projeto } from "@/lib/tipos"
 
 export const chaves = {
   projeto: (id: number) => ["projeto", id] as const,
   indicadores: (id: number) => ["projeto", id, "indicadores"] as const,
   membros: (id: number) => ["projeto", id, "membros"] as const,
+  pilares: (id: number) => ["projeto", id, "pilares"] as const,
   comentarios: (id: number, filtro: string) => ["projeto", id, "comentarios", filtro] as const,
   historico: (id: number, offset: number) => ["projeto", id, "historico", offset] as const,
 }
@@ -22,6 +23,10 @@ export function useIndicadores(id: number) {
 
 export function useMembros(id: number) {
   return useQuery({ queryKey: chaves.membros(id), queryFn: () => api<Membro[]>(`/projetos/${id}/membros`) })
+}
+
+export function usePilares(id: number) {
+  return useQuery({ queryKey: chaves.pilares(id), queryFn: () => api<Pilar[]>(`/projetos/${id}/pilares`) })
 }
 
 /** Depois de qualquer alteração: recarrega projeto, indicadores, membros e histórico. */

@@ -157,5 +157,6 @@ limite_refresh = LimitadorTaxa("refresh", max_requisicoes=300, janela_segundos=6
 limite_importacao = LimitadorTaxa("importacao", max_requisicoes=10, janela_segundos=60)
 limite_ia = LimitadorTaxa("ia", max_requisicoes=5, janela_segundos=60)  # cada chamada custa tokens
 limite_config_2fa = LimitadorTaxa("config-2fa", max_requisicoes=10, janela_segundos=60)
+limite_relatorio = LimitadorTaxa("relatorio", max_requisicoes=10, janela_segundos=60)  # PDF gasta CPU
 
 falhas_login = FalhasLogin()

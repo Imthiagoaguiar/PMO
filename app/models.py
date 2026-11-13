@@ -19,9 +19,10 @@ from sqlalchemy import (
     false,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.database import Base
+from app.texto import normalizar
 
 # Fases padrão do Waterfall, na ordem em que são criadas (ordem_sequencia = posição + 1).
 FASES_WATERFALL = ("Iniciação", "Planejamento", "Execução", "Monitoramento", "Encerramento")
@@ -43,6 +44,22 @@ class StatusProjeto(str, enum.Enum):
     EM_ANDAMENTO = "Em andamento"
     CONCLUIDO = "Concluído"
     CANCELADO = "Cancelado"
+
+
+class FarolPilar(str, enum.Enum):
+    VERDE = "verde"        # no prazo / sem riscos
+    AMARELO = "amarelo"    # atenção
+    VERMELHO = "vermelho"  # problema: precisa de ação
+
+
+# Frentes de trabalho com que todo projeto nasce (o editor renomeia, remove ou cria outras).
+PILARES_PADRAO = ("TI", "Suprimentos", "CAPEX", "Pessoas")
+MAX_PILARES = 20
+
+
+def chave_do_pilar(nome: str) -> str:
+    """Nome comparável: sem acento, sem caixa, sem espaços ("Jurídico " == "juridico")."""
+    return "".join(normalizar(nome).split())[:60]
 
 
 class PapelUsuario(str, enum.Enum):
@@ -206,6 +223,9 @@ class Projeto(Base):
     comentarios: Mapped[List["Comentario"]] = relationship(
         back_populates="projeto", cascade="all, delete-orphan"
     )
+    pilares: Mapped[List["Pilar"]] = relationship(
+        back_populates="projeto", cascade="all, delete-orphan", order_by="(Pilar.ordem, Pilar.id)"
+    )
 
     __table_args__ = (
         CheckConstraint("orcamento_aprovado >= 0", name="ck_projeto_orcamento_positivo"),
@@ -280,12 +300,15 @@ class Tarefa(Base):
         ForeignKey("usuarios.id", ondelete="SET NULL"), index=True
     )
     percentual_conclusao: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Frente de trabalho (TI, Suprimentos...): cruza as fases. Excluir o pilar não exclui a tarefa.
+    pilar_id: Mapped[Optional[int]] = mapped_column(ForeignKey("pilares.id", ondelete="SET NULL"), index=True)
     versao: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")  # ver Projeto.versao
 
     __mapper_args__ = {"version_id_col": versao}
 
     fase: Mapped["Fase"] = relationship(back_populates="tarefas")
     responsavel_usuario: Mapped[Optional["Usuario"]] = relationship()
+    pilar: Mapped[Optional["Pilar"]] = relationship()
     comentarios: Mapped[List["Comentario"]] = relationship(
         back_populates="tarefa", cascade="all, delete"
     )
@@ -295,6 +318,52 @@ class Tarefa(Base):
             "percentual_conclusao BETWEEN 0 AND 100", name="ck_tarefa_percentual"
         ),
         CheckConstraint("data_fim >= data_inicio", name="ck_tarefa_datas"),
+    )
+
+
+class Pilar(Base):
+    """
+    Frente de trabalho dentro do projeto (TI, Suprimentos, CAPEX, Pessoas...).
+    O andamento vem das tarefas ligadas a ele; o farol e o texto de status são a avaliação do
+    responsável; orçado x realizado mostra a execução financeira da frente.
+    """
+
+    __tablename__ = "pilares"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    projeto_id: Mapped[int] = mapped_column(
+        ForeignKey("projetos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    nome: Mapped[str] = mapped_column(String(60), nullable=False)
+    # "TI", "ti" e " T I " são o mesmo pilar. A unicidade fica no BANCO (sobre esta chave), então
+    # vale até para duas pessoas criando "TI" e "ti" no mesmo instante.
+    nome_chave: Mapped[str] = mapped_column(String(60), nullable=False)
+    ordem: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    farol: Mapped[Optional[FarolPilar]] = mapped_column(_enum(FarolPilar))
+    status_texto: Mapped[Optional[str]] = mapped_column(Text)
+    status_atualizado_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    status_atualizado_por_id: Mapped[Optional[int]] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"))
+    valor_orcado: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2))
+    valor_realizado: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2))
+    versao: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")  # ver Projeto.versao
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __mapper_args__ = {"version_id_col": versao}
+
+    projeto: Mapped["Projeto"] = relationship(back_populates="pilares")
+    status_atualizado_por: Mapped[Optional["Usuario"]] = relationship()
+
+    @validates("nome")
+    def _definir_chave(self, _campo: str, nome: str) -> str:
+        self.nome_chave = chave_do_pilar(nome)
+        return nome
+
+    __table_args__ = (
+        UniqueConstraint("projeto_id", "nome_chave", name="uq_pilar_projeto_nome_chave"),
+        CheckConstraint("valor_orcado >= 0", name="ck_pilar_orcado_positivo"),
+        CheckConstraint("valor_realizado >= 0", name="ck_pilar_realizado_positivo"),
     )
 
 
