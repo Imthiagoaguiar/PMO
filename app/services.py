@@ -20,6 +20,7 @@ from app.integracoes.feriados import calcular_data_fim, proximo_dia_util
 from app.models import (
     FASES_WATERFALL,
     Fase,
+    PapelProjeto,
     PapelUsuario,
     Projeto,
     ProjetoMembro,
@@ -92,7 +93,7 @@ def criar_projeto_com_fases(
         Fase(titulo=titulo, ordem_sequencia=ordem)
         for ordem, titulo in enumerate(FASES_WATERFALL, start=1)
     ]
-    projeto.membros = [ProjetoMembro(usuario=dono)]
+    projeto.membros = [ProjetoMembro(usuario=dono, papel=PapelProjeto.EDITOR)]
     db.add(projeto)
     return projeto
 

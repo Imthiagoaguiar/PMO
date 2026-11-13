@@ -8,7 +8,7 @@ from sqlalchemy import text
 from app.auditoria import ip_requisicao
 from app.config import settings
 from app.database import engine
-from app.routers import auditoria, auth, projetos, tarefas, usuarios
+from app.routers import auditoria, auth, comentarios, projetos, tarefas, usuarios
 
 EM_PRODUCAO = settings.ambiente == "prod"
 
@@ -75,4 +75,5 @@ app.include_router(usuarios.router)
 app.include_router(projetos.router)
 app.include_router(tarefas.router)
 app.include_router(tarefas.minhas_router)
+app.include_router(comentarios.router)
 app.include_router(auditoria.router)

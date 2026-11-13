@@ -53,13 +53,13 @@ def test_dono_cria_edita_move_e_exclui_tarefa(client, projeto):
     assert client.patch(url, json={"percentual_conclusao": 1}, headers=h["gerente"]).status_code == 404
 
 
-def test_membro_so_atualiza_percentual(client, projeto):
-    p, h = projeto
+def test_visualizador_nao_altera_nada_no_cronograma(client, projeto):
+    p, h = projeto  # "membro" entra no projeto como visualizador (padrão)
     tarefa = _criar_tarefa(client, p, h["gerente"]).json()
     url = f"/projetos/{p['id']}/tarefas/{tarefa['id']}"
 
     assert _criar_tarefa(client, p, h["membro"]).status_code == 403
-    assert client.patch(url, json={"percentual_conclusao": 80}, headers=h["membro"]).status_code == 200
+    assert client.patch(url, json={"percentual_conclusao": 80}, headers=h["membro"]).status_code == 403
     assert client.patch(url, json={"descricao": "Hackeado"}, headers=h["membro"]).status_code == 403
     assert client.delete(url, headers=h["membro"]).status_code == 403
 

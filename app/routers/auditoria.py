@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.deps import Paginacao, exigir_papel, paginar
@@ -26,7 +26,7 @@ def listar_auditoria(
     db: Session = Depends(get_db),
     _: Usuario = Depends(exigir_papel(PapelUsuario.ADMIN)),
 ) -> Dict[str, Any]:
-    query = select(Auditoria)
+    query = select(Auditoria).options(selectinload(Auditoria.usuario))
     if usuario_id is not None:
         query = query.where(Auditoria.usuario_id == usuario_id)
     if projeto_id is not None:

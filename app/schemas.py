@@ -4,7 +4,7 @@ from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.models import FASES_WATERFALL, PapelUsuario, ProvedorAuth, StatusProjeto
+from app.models import FASES_WATERFALL, PapelProjeto, PapelUsuario, ProvedorAuth, StatusProjeto
 from app.texto import normalizar
 
 # NIST 800-63B: comprimento importa mais que regras de "caractere especial".
@@ -266,8 +266,17 @@ class ProjetoResumo(BaseModel):
     dono_id: int
 
 
+class PermissoesProjeto(BaseModel):
+    """Para o front decidir o que mostrar. A API valida tudo de novo em cada requisição."""
+
+    editar: bool = Field(..., description="Alterar dados do projeto e o cronograma")
+    gerenciar: bool = Field(..., description="Gerenciar membros e excluir o projeto")
+    comentar: bool = True
+
+
 class ProjetoRead(ProjetoResumo):
     fases: List[FaseRead]
+    permissoes: Optional[PermissoesProjeto] = None
 
 
 class ProjetoIAEntrada(BaseModel):
@@ -398,6 +407,50 @@ class TokenResposta(BaseModel):
 
 class MembroAdicionar(BaseModel):
     usuario_id: int
+    papel: PapelProjeto = PapelProjeto.VISUALIZADOR
+
+
+class MembroAlterar(BaseModel):
+    papel: PapelProjeto
+
+
+class MembroRead(UsuarioResumo):
+    papel: PapelProjeto
+    dono: bool
+
+
+# ---------- Comentários ----------
+
+
+class ComentarioCreate(BaseModel):
+    texto: str = Field(..., min_length=1, max_length=2000)
+    tarefa_id: Optional[int] = Field(None, description="Vazio = comentário no projeto")
+
+    @field_validator("texto", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return v.strip() if isinstance(v, str) else v
+
+
+class ComentarioUpdate(BaseModel):
+    texto: str = Field(..., min_length=1, max_length=2000)
+
+    @field_validator("texto", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return v.strip() if isinstance(v, str) else v
+
+
+class ComentarioRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    projeto_id: int
+    tarefa_id: Optional[int]
+    texto: str
+    criado_em: datetime
+    editado_em: Optional[datetime]
+    autor: Optional[UsuarioResumo] = Field(None, description="Nulo se o usuário foi excluído")
 
 
 # ---------- Auditoria ----------
@@ -415,3 +468,4 @@ class AuditoriaRead(BaseModel):
     projeto_id: Optional[int]
     detalhes: Optional[Dict[str, Any]]
     ip: Optional[str]
+    usuario: Optional[UsuarioResumo] = Field(None, description="Quem fez a ação (nulo: anônimo ou excluído)")

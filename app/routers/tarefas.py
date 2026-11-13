@@ -2,8 +2,8 @@
 Cronograma do projeto (tarefas dentro das fases).
 
 Regras:
-- Dono do projeto / Admin: criam, editam qualquer campo, movem entre fases e excluem.
-- Membro do projeto: só atualiza o percentual de conclusão (reporta o andamento).
+- Dono, admin e editores: criam, editam qualquer campo (inclusive o percentual), movem entre fases e excluem.
+- Visualizadores: só leem (e comentam, em /comentarios).
 - Projeto Concluído/Cancelado: cronograma somente leitura até ser reaberto.
 - responsavel_id precisa ser um membro ativo do projeto.
 - duracao_dias_uteis: a data_fim é calculada pulando fins de semana e feriados (Brasil API).
@@ -24,10 +24,8 @@ from app.deps import (
     exigir_projeto_aberto,
     filtrar_projetos_visiveis,
     get_usuario_atual,
-    obter_projeto_gerenciavel,
-    obter_projeto_visivel,
+    obter_projeto_editavel,
     paginar,
-    pode_gerenciar,
     salvar,
 )
 from app.models import Fase, Projeto, Tarefa, Usuario
@@ -35,9 +33,6 @@ from app.schemas import MinhaTarefa, Pagina, TarefaCreate, TarefaRead, TarefaUpd
 
 router = APIRouter(prefix="/projetos/{projeto_id}", tags=["Tarefas"])
 minhas_router = APIRouter(prefix="/tarefas", tags=["Tarefas"])
-
-CAMPOS_DO_MEMBRO = {"percentual_conclusao"}
-
 
 def _fase_do_projeto(projeto: Projeto, fase_id: int) -> Fase:
     fase = next((f for f in projeto.fases if f.id == fase_id), None)
@@ -80,7 +75,7 @@ def criar_tarefa(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> Tarefa:
-    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario)
+    projeto = obter_projeto_editavel(db, projeto_id, usuario)
     exigir_projeto_aberto(projeto)
     fase = _fase_do_projeto(projeto, fase_id)
     _validar_responsavel(projeto, payload.responsavel_id)
@@ -108,16 +103,10 @@ def atualizar_tarefa(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> Tarefa:
-    projeto = obter_projeto_visivel(db, projeto_id, usuario)
+    projeto = obter_projeto_editavel(db, projeto_id, usuario)
     tarefa = _tarefa_do_projeto(db, projeto, tarefa_id)
     exigir_projeto_aberto(projeto)
     alteracoes = payload.model_dump(exclude_unset=True)
-
-    if not pode_gerenciar(projeto, usuario) and set(alteracoes) - CAMPOS_DO_MEMBRO:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Membros só podem atualizar o percentual de conclusão.",
-        )
     duracao = alteracoes.pop("duracao_dias_uteis", None)
     if duracao is not None:
         inicio = alteracoes.get("data_inicio", tarefa.data_inicio)
@@ -151,7 +140,7 @@ def excluir_tarefa(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> None:
-    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario)
+    projeto = obter_projeto_editavel(db, projeto_id, usuario)
     exigir_projeto_aberto(projeto)
     tarefa = _tarefa_do_projeto(db, projeto, tarefa_id)
     auditoria.registrar(

@@ -14,6 +14,7 @@ from sqlalchemy import (
     JSON,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -47,6 +48,11 @@ class PapelUsuario(str, enum.Enum):
     ADMIN = "admin"        # gerencia usuários e enxerga todos os projetos
     GERENTE = "gerente"    # cria projetos (vira dono) e gerencia os membros deles
     MEMBRO = "membro"      # enxerga apenas os projetos dos quais é membro
+
+
+class PapelProjeto(str, enum.Enum):
+    EDITOR = "editor"              # edita os dados do projeto e o cronograma
+    VISUALIZADOR = "visualizador"  # vê, exporta e comenta; não altera nada
 
 
 class ProvedorAuth(str, enum.Enum):
@@ -141,6 +147,9 @@ class Projeto(Base):
     membros: Mapped[List["ProjetoMembro"]] = relationship(
         back_populates="projeto", cascade="all, delete-orphan"
     )
+    comentarios: Mapped[List["Comentario"]] = relationship(
+        back_populates="projeto", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         CheckConstraint("orcamento_aprovado >= 0", name="ck_projeto_orcamento_positivo"),
@@ -148,7 +157,10 @@ class Projeto(Base):
 
 
 class ProjetoMembro(Base):
-    """Quem pode enxergar o projeto. O dono também é registrado aqui."""
+    """
+    Quem enxerga o projeto e com qual papel. O dono também é registrado aqui (como editor).
+    Dono e admin, além de editar, gerenciam membros e podem excluir o projeto.
+    """
 
     __tablename__ = "projeto_membros"
 
@@ -157,6 +169,12 @@ class ProjetoMembro(Base):
     )
     usuario_id: Mapped[int] = mapped_column(
         ForeignKey("usuarios.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    papel: Mapped[PapelProjeto] = mapped_column(
+        _enum(PapelProjeto),
+        default=PapelProjeto.VISUALIZADOR,  # menor privilégio
+        server_default=PapelProjeto.VISUALIZADOR.value,
+        nullable=False,
     )
     adicionado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -209,6 +227,9 @@ class Tarefa(Base):
 
     fase: Mapped["Fase"] = relationship(back_populates="tarefas")
     responsavel_usuario: Mapped[Optional["Usuario"]] = relationship()
+    comentarios: Mapped[List["Comentario"]] = relationship(
+        back_populates="tarefa", cascade="all, delete"
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -216,6 +237,34 @@ class Tarefa(Base):
         ),
         CheckConstraint("data_fim >= data_inicio", name="ck_tarefa_datas"),
     )
+
+
+# ---------- Colaboração ----------
+
+
+class Comentario(Base):
+    """Comentário no projeto (tarefa_id nulo) ou numa tarefa. Qualquer membro pode comentar."""
+
+    __tablename__ = "comentarios"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    projeto_id: Mapped[int] = mapped_column(
+        ForeignKey("projetos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tarefa_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("tarefas.id", ondelete="CASCADE"), index=True
+    )
+    # SET NULL: o comentário continua no histórico se o usuário for excluído.
+    autor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"))
+    texto: Mapped[str] = mapped_column(Text, nullable=False)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    editado_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    projeto: Mapped["Projeto"] = relationship(back_populates="comentarios")
+    tarefa: Mapped[Optional["Tarefa"]] = relationship(back_populates="comentarios")
+    autor: Mapped[Optional["Usuario"]] = relationship()
 
 
 # ---------- Auditoria ----------

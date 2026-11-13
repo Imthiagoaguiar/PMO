@@ -26,7 +26,9 @@ def cenario(client, criar_usuario, login):
     }
     h = {k: login(e) for k, e in (("admin", ADMIN), ("gerente", GERENTE), ("membro", MEMBRO), ("fora", FORA))}
     p = client.post("/projetos/manual", json={"nome_projeto": "ERP"}, headers=h["gerente"]).json()
-    client.post(f"/projetos/{p['id']}/membros", json={"usuario_id": u["membro"].id}, headers=h["gerente"])
+    # Neste arquivo o "membro" é editor: os testes exercitam edição por quem não é dono.
+    client.post(f"/projetos/{p['id']}/membros", json={"usuario_id": u["membro"].id, "papel": "editor"},
+                headers=h["gerente"])
     return p, u, h
 
 

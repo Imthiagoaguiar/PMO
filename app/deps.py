@@ -13,7 +13,16 @@ from sqlalchemy.orm import Session, selectinload
 from app import services
 from app.database import get_db
 from app.integracoes import clerk
-from app.models import Fase, PapelUsuario, Projeto, ProjetoMembro, StatusProjeto, Tarefa, Usuario
+from app.models import (
+    Fase,
+    PapelProjeto,
+    PapelUsuario,
+    Projeto,
+    ProjetoMembro,
+    StatusProjeto,
+    Tarefa,
+    Usuario,
+)
 from app.security import decodificar_access_token
 
 logger = logging.getLogger(__name__)
@@ -113,9 +122,33 @@ def obter_projeto_visivel(
     return projeto
 
 
+# Quem pode o quê dentro de um projeto:
+#   visualizador -> ver, exportar, comentar
+#   editor       -> + alterar dados do projeto (inclusive status) e o cronograma
+#   dono / admin -> + gerenciar membros e excluir o projeto
+
+
 def pode_gerenciar(projeto: Projeto, usuario: Usuario) -> bool:
-    """Dono do projeto ou admin: podem alterar dados, membros e cronograma."""
+    """Dono do projeto ou admin."""
     return usuario.papel == PapelUsuario.ADMIN or projeto.dono_id == usuario.id
+
+
+def pode_editar(projeto: Projeto, usuario: Usuario) -> bool:
+    if pode_gerenciar(projeto, usuario):
+        return True
+    return any(m.usuario_id == usuario.id and m.papel == PapelProjeto.EDITOR for m in projeto.membros)
+
+
+def obter_projeto_editavel(
+    db: Session, projeto_id: int, usuario: Usuario, carregar_tarefas: bool = False
+) -> Projeto:
+    projeto = obter_projeto_visivel(db, projeto_id, usuario, carregar_tarefas)
+    if not pode_editar(projeto, usuario):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Você tem acesso apenas de visualização a este projeto.",
+        )
+    return projeto
 
 
 def obter_projeto_gerenciavel(db: Session, projeto_id: int, usuario: Usuario) -> Projeto:

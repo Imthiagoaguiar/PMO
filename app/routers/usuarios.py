@@ -6,7 +6,7 @@ e-mail e papel; no primeiro login pelo Clerk com esse e-mail, a conta é vincula
 Com CLERK_CADASTRO_AUTOMATICO=false, esse pré-cadastro é a ÚNICA forma de entrar pelo Clerk.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
@@ -18,12 +18,34 @@ from app.integracoes import clerk
 from app.database import get_db
 from app.deps import Paginacao, escapar_like, exigir_papel, paginar, salvar
 from app.models import PapelUsuario, ProvedorAuth, Usuario
-from app.schemas import Pagina, UsuarioCreate, UsuarioRead, UsuarioUpdate
+from app.schemas import Pagina, UsuarioCreate, UsuarioRead, UsuarioResumo, UsuarioUpdate
 from app.security import gerar_hash_senha
 
 router = APIRouter(prefix="/usuarios", tags=["Usuários"])
 
 somente_admin = exigir_papel(PapelUsuario.ADMIN)
+admin_ou_gerente = exigir_papel(PapelUsuario.ADMIN, PapelUsuario.GERENTE)
+
+
+@router.get("/diretorio", response_model=List[UsuarioResumo])
+def buscar_no_diretorio(
+    busca: str = Query(..., min_length=2, max_length=100, description="Parte do nome ou e-mail"),
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(admin_ou_gerente),
+) -> List[Usuario]:
+    """
+    Para o dono do projeto encontrar quem adicionar como membro.
+    Só nome e e-mail de usuários ativos, no máximo 20: não é uma listagem do cadastro inteiro.
+    """
+    termo = f"%{escapar_like(busca.strip())}%"
+    query = (
+        select(Usuario)
+        .where(Usuario.ativo.is_(True))
+        .where(or_(Usuario.nome.ilike(termo, escape="\\"), Usuario.email.ilike(termo, escape="\\")))
+        .order_by(Usuario.nome, Usuario.id)
+        .limit(20)
+    )
+    return list(db.scalars(query))
 
 
 @router.post("", response_model=UsuarioRead, status_code=status.HTTP_201_CREATED)
