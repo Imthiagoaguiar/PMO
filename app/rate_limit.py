@@ -118,3 +118,6 @@ limite_importacao = LimitadorTaxa("importacao", max_requisicoes=10, janela_segun
 limite_ia = LimitadorTaxa("ia", max_requisicoes=5, janela_segundos=60)
 
 falhas_login = ContadorFalhas()
+# Segunda etapa do login e configuração do 2FA: contador próprio, para o login com 2FA
+# não gastar o dobro do limite de /auth/login. Chutes de código também caem no ContadorFalhas.
+limite_2fa = LimitadorTaxa("2fa", max_requisicoes=20, janela_segundos=60)

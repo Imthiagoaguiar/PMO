@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "reac
 
 import { TrocaObrigatoria } from "@/components/AlterarSenha"
 import { Carregando } from "@/components/comum"
+import { DoisFatoresObrigatorio } from "@/components/DoisFatores"
 import { Layout } from "@/components/Layout"
 import { useAuth } from "@/lib/auth"
 import type { PapelUsuario } from "@/lib/tipos"
@@ -20,6 +21,7 @@ function ComSessao({ children }: { children: ReactNode }) {
   if (carregando) return <Carregando texto="Verificando sua sessão..." />
   if (!usuario) return <Navigate to="/login" replace state={{ de: location.pathname + location.search }} />
   if (usuario.trocar_senha) return <TrocaObrigatoria />
+  if (usuario.exige_configurar_2fa) return <DoisFatoresObrigatorio />
   return children
 }
 

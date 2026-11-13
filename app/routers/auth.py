@@ -12,24 +12,41 @@ O front guarda o access token só em memória e chama /auth/refresh ao recarrega
 
 import logging
 from datetime import timedelta
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+import jwt
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import auditoria, senhas, services
+from app import auditoria, dois_fatores, senhas, services
 from app.config import settings
 from app.database import get_db
 from app.deps import get_usuario_sessao
-from app.models import ProvedorAuth, RefreshToken, Usuario
-from app.rate_limit import falhas_login, limite_login, limite_refresh
-from app.schemas import SENHA_MAX, AlterarSenha, TokenResposta, UsuarioRead
+from app.models import PapelUsuario, ProvedorAuth, RefreshToken, Usuario
+from app.rate_limit import falhas_login, limite_2fa, limite_login, limite_refresh
+from app.schemas import (
+    SENHA_MAX,
+    AlterarSenha,
+    CodigoDoisFatores,
+    CodigosRecuperacao,
+    ConfiguracaoDoisFatores,
+    ConfirmarSenha,
+    ConfirmarSenhaECodigo,
+    DesafioDoisFatores,
+    LoginDoisFatores,
+    StatusDoisFatores,
+    TokenResposta,
+    UsuarioRead,
+)
 from app.security import (
+    DESAFIO_2FA_MINUTOS,
     agora_utc,
     como_utc,
     criar_access_token,
+    criar_desafio_2fa,
+    decodificar_desafio_2fa,
     gerar_hash_senha,
     gerar_refresh_token,
     hash_token,
@@ -85,62 +102,142 @@ def _emitir_sessao(db: Session, response: Response, usuario: Usuario) -> TokenRe
     )
 
 
-@router.post("/login", response_model=TokenResposta, dependencies=[Depends(limite_login)])
+def _registrar_falha(db: Session, usuario: Optional[Usuario], email: str, ip: str, acao: str) -> None:
+    """Senha ou código errado: conta para o bloqueio por e-mail + IP e para o bloqueio da conta."""
+    falhas_login.registrar(email, ip)
+    auditoria.registrar(
+        db, acao, "usuario", usuario.id if usuario else None, usuario=usuario, detalhes={"email": email}
+    )
+    if usuario:
+        usuario.tentativas_falhas += 1
+        if usuario.tentativas_falhas >= settings.max_tentativas_conta:
+            usuario.bloqueado_ate = agora_utc() + timedelta(minutes=settings.bloqueio_minutos)
+            usuario.tentativas_falhas = 0
+            logger.warning("Conta %s bloqueada: tentativas de vários lugares", usuario.id)
+            auditoria.registrar(db, "auth.conta_bloqueada", "usuario", usuario.id, usuario=usuario)
+
+
+def _barrado(usuario: Optional[Usuario], email: str, ip: str) -> Optional[str]:
+    if falhas_login.bloqueado(email, ip):
+        return "e-mail + IP"
+    if usuario and usuario.bloqueado_ate and como_utc(usuario.bloqueado_ate) > agora_utc():
+        return "conta bloqueada"
+    return None
+
+
+def _ip(request: Request) -> str:
+    return request.client.host if request.client else "desconhecido"
+
+
+def _concluir_login(db: Session, response: Response, usuario: Usuario, **detalhes: str) -> TokenResposta:
+    falhas_login.limpar(usuario.email)
+    usuario.tentativas_falhas = 0
+    usuario.bloqueado_ate = None
+    auditoria.registrar(db, "auth.login", "usuario", usuario.id, usuario=usuario, detalhes=detalhes or None)
+    return _emitir_sessao(db, response, usuario)
+
+
+@router.post(
+    "/login",
+    response_model=Union[TokenResposta, DesafioDoisFatores],
+    dependencies=[Depends(limite_login)],
+)
 def login(
     request: Request,
     response: Response,
     form: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
-) -> TokenResposta:
+) -> Union[TokenResposta, DesafioDoisFatores]:
     """
     Login com e-mail (campo `username`, padrão OAuth2) e senha.
 
     Toda falha devolve a MESMA resposta e leva o mesmo tempo (o Argon2 roda sempre): e-mail
     inexistente, senha errada, conta desativada ou bloqueada são indistinguíveis por fora.
+
+    Com 2FA ativo, a senha certa devolve `{"requer_2fa": true, "desafio": ...}` e NENHUMA sessão:
+    o acesso só sai em POST /auth/login/2fa, com o código do app.
     """
     credenciais_invalidas = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=MENSAGEM_FALHA_LOGIN)
     if len(form.password) > SENHA_MAX or len(form.username) > 254:
         raise credenciais_invalidas  # evita gastar CPU com Argon2 em entradas gigantes
 
-    agora = agora_utc()
     email = form.username.strip().lower()
-    ip = request.client.host if request.client else "desconhecido"
+    ip = _ip(request)
     usuario = db.scalar(select(Usuario).where(Usuario.email == email))
-
-    barrado_neste_ip = falhas_login.bloqueado(email, ip)
-    conta_bloqueada = bool(usuario and usuario.bloqueado_ate and como_utc(usuario.bloqueado_ate) > agora)
+    motivo_barrado = _barrado(usuario, email, ip)
     senha_correta = verificar_senha(form.password, usuario.senha_hash if usuario else None)
 
-    if barrado_neste_ip or conta_bloqueada or not senha_correta or not usuario.ativo:
-        if barrado_neste_ip or conta_bloqueada:
+    if motivo_barrado or not senha_correta or not usuario.ativo:
+        if motivo_barrado:
             # Tentativa durante o bloqueio: registra, mas não conta de novo (não prolonga o bloqueio).
             auditoria.registrar(
                 db, "auth.login_barrado", "usuario", usuario.id if usuario else None, usuario=usuario,
-                detalhes={"email": email, "motivo": "conta bloqueada" if conta_bloqueada else "e-mail + IP"},
+                detalhes={"email": email, "motivo": motivo_barrado},
             )
         elif not senha_correta:
-            falhas_login.registrar(email, ip)
-            auditoria.registrar(
-                db, "auth.login_falhou", "usuario", usuario.id if usuario else None,
-                usuario=usuario, detalhes={"email": email},
-            )
-            if usuario:
-                usuario.tentativas_falhas += 1
-                if usuario.tentativas_falhas >= settings.max_tentativas_conta:
-                    usuario.bloqueado_ate = agora + timedelta(minutes=settings.bloqueio_minutos)
-                    usuario.tentativas_falhas = 0
-                    logger.warning("Conta %s bloqueada: tentativas de vários lugares", usuario.id)
-                    auditoria.registrar(db, "auth.conta_bloqueada", "usuario", usuario.id, usuario=usuario)
+            _registrar_falha(db, usuario, email, ip, "auth.login_falhou")
         db.commit()
         raise credenciais_invalidas
 
-    falhas_login.limpar(email)
-    usuario.tentativas_falhas = 0
-    usuario.bloqueado_ate = None
     if precisa_rehash(usuario.senha_hash):
         usuario.senha_hash = gerar_hash_senha(form.password)
-    auditoria.registrar(db, "auth.login", "usuario", usuario.id, usuario=usuario)
-    return _emitir_sessao(db, response, usuario)
+
+    if usuario.totp_ativo:
+        # Os contadores de falha NÃO são zerados aqui: senão quem tem só a senha poderia
+        # alternar "senha certa" e "código chutado" sem nunca ser bloqueado.
+        db.commit()
+        return DesafioDoisFatores(
+            desafio=criar_desafio_2fa(usuario.id, usuario.versao_sessao),
+            expira_em_segundos=DESAFIO_2FA_MINUTOS * 60,
+        )
+    return _concluir_login(db, response, usuario)
+
+
+@router.post("/login/2fa", response_model=TokenResposta, dependencies=[Depends(limite_2fa)])
+def login_segunda_etapa(
+    payload: LoginDoisFatores,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> TokenResposta:
+    """Segunda etapa: código de 6 dígitos do app (ou um código de recuperação)."""
+    desafio_invalido = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Verificação expirada. Entre novamente com e-mail e senha."
+    )
+    try:
+        desafio = decodificar_desafio_2fa(payload.desafio)
+    except jwt.InvalidTokenError:
+        raise desafio_invalido
+    usuario = db.get(Usuario, desafio.usuario_id)
+    if (
+        usuario is None
+        or not usuario.ativo
+        or not usuario.totp_ativo
+        or usuario.versao_sessao != desafio.versao_sessao  # senha trocada / sessões encerradas no meio
+    ):
+        raise desafio_invalido
+
+    # Quem chegou aqui já provou a senha: dá para dizer claramente que está bloqueado.
+    ip = _ip(request)
+    if _barrado(usuario, usuario.email, ip):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Muitas tentativas. Aguarde alguns minutos e entre novamente.",
+        )
+
+    metodo = dois_fatores.verificar_codigo(db, usuario, payload.codigo)
+    if not metodo:
+        _registrar_falha(db, usuario, usuario.email, ip, "auth.2fa_falhou")
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Código inválido ou já usado.")
+
+    if metodo == "recuperacao":
+        restantes = dois_fatores.codigos_restantes(db, usuario) - 1  # o usado ainda não foi gravado
+        auditoria.registrar(
+            db, "auth.codigo_recuperacao_usado", "usuario", usuario.id, usuario=usuario,
+            detalhes={"restantes": restantes},
+        )
+    return _concluir_login(db, response, usuario, metodo=metodo)
 
 
 @router.post("/refresh", response_model=TokenResposta, dependencies=[Depends(limite_refresh)])
@@ -231,3 +328,121 @@ def alterar_senha(
     auditoria.registrar(db, "auth.senha_alterada", "usuario", usuario.id, usuario=usuario)
     db.commit()
     _apagar_cookie(response)
+
+
+# ---------- Configuração do 2FA (pelo próprio usuário) ----------
+
+
+def _exigir_login_local(usuario: Usuario) -> None:
+    if usuario.provedor_auth != ProvedorAuth.LOCAL:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sua conta entra por um provedor externo: configure a verificação em duas etapas nele.",
+        )
+
+
+def _conferir_senha(usuario: Usuario, senha: str) -> None:
+    # Pedir a senha de novo impede que alguém com um token roubado cadastre o próprio celular
+    # (ou desligue o 2FA) e tome a conta.
+    if not verificar_senha(senha, usuario.senha_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Senha incorreta.")
+
+
+def _conferir_codigo(db: Session, usuario: Usuario, codigo: str) -> None:
+    if not dois_fatores.verificar_codigo(db, usuario, codigo):
+        db.commit()  # grava o passo/código consumido mesmo na falha seguinte
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Código inválido ou já usado.")
+
+
+@router.get("/2fa", response_model=StatusDoisFatores)
+def status_2fa(usuario: Usuario = Depends(get_usuario_sessao), db: Session = Depends(get_db)) -> StatusDoisFatores:
+    return StatusDoisFatores(
+        ativo=usuario.totp_ativo,
+        obrigatorio=settings.exigir_2fa_admin and usuario.papel == PapelUsuario.ADMIN,
+        codigos_restantes=dois_fatores.codigos_restantes(db, usuario) if usuario.totp_ativo else 0,
+    )
+
+
+@router.post("/2fa/iniciar", response_model=ConfiguracaoDoisFatores, dependencies=[Depends(limite_2fa)])
+def iniciar_2fa(
+    payload: ConfirmarSenha,
+    usuario: Usuario = Depends(get_usuario_sessao),
+    db: Session = Depends(get_db),
+) -> ConfiguracaoDoisFatores:
+    """Passo 1: gera o segredo (QR code). Só passa a valer depois de confirmado em /2fa/ativar."""
+    _exigir_login_local(usuario)
+    if usuario.totp_ativo:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A verificação em duas etapas já está ativa.")
+    _conferir_senha(usuario, payload.senha)
+    segredo = dois_fatores.iniciar_configuracao(usuario)
+    db.commit()
+    return ConfiguracaoDoisFatores(segredo=segredo, uri=dois_fatores.uri_provisionamento(usuario, segredo))
+
+
+@router.post("/2fa/ativar", response_model=CodigosRecuperacao, dependencies=[Depends(limite_2fa)])
+def ativar_2fa(
+    payload: CodigoDoisFatores,
+    response: Response,
+    usuario: Usuario = Depends(get_usuario_sessao),
+    db: Session = Depends(get_db),
+) -> CodigosRecuperacao:
+    """
+    Passo 2: confirma que o app está gerando os códigos certos e ativa.
+    Devolve os códigos de recuperação (únicos e mostrados só agora) e encerra todas as sessões:
+    as próximas entradas já passam pela verificação em duas etapas.
+    """
+    _exigir_login_local(usuario)
+    if usuario.totp_ativo:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A verificação em duas etapas já está ativa.")
+    if not usuario.totp_segredo_cifrado:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Comece pela leitura do QR code.")
+    if not dois_fatores.verificar_totp(usuario, payload.codigo):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Código não confere. Verifique se o relógio do celular está certo e tente o código atual.",
+        )
+
+    usuario.totp_ativo = True
+    codigos = dois_fatores.gerar_codigos_recuperacao(db, usuario)
+    services.derrubar_sessoes(db, usuario)
+    auditoria.registrar(db, "auth.2fa_ativado", "usuario", usuario.id, usuario=usuario)
+    db.commit()
+    _apagar_cookie(response)
+    return CodigosRecuperacao(codigos_recuperacao=codigos)
+
+
+@router.post("/2fa/codigos", response_model=CodigosRecuperacao, dependencies=[Depends(limite_2fa)])
+def novos_codigos_recuperacao(
+    payload: ConfirmarSenhaECodigo,
+    usuario: Usuario = Depends(get_usuario_sessao),
+    db: Session = Depends(get_db),
+) -> CodigosRecuperacao:
+    """Gera 10 códigos novos; os anteriores deixam de valer."""
+    if not usuario.totp_ativo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A verificação em duas etapas não está ativa.")
+    _conferir_senha(usuario, payload.senha)
+    _conferir_codigo(db, usuario, payload.codigo)
+    codigos = dois_fatores.gerar_codigos_recuperacao(db, usuario)
+    auditoria.registrar(db, "auth.codigos_recuperacao_gerados", "usuario", usuario.id, usuario=usuario)
+    db.commit()
+    return CodigosRecuperacao(codigos_recuperacao=codigos)
+
+
+@router.post("/2fa/desativar", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(limite_2fa)])
+def desativar_2fa(
+    payload: ConfirmarSenhaECodigo,
+    usuario: Usuario = Depends(get_usuario_sessao),
+    db: Session = Depends(get_db),
+) -> None:
+    if not usuario.totp_ativo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A verificação em duas etapas não está ativa.")
+    if settings.exigir_2fa_admin and usuario.papel == PapelUsuario.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Administradores precisam manter a verificação em duas etapas.",
+        )
+    _conferir_senha(usuario, payload.senha)
+    _conferir_codigo(db, usuario, payload.codigo)
+    dois_fatores.desativar(db, usuario)
+    auditoria.registrar(db, "auth.2fa_desativado", "usuario", usuario.id, usuario=usuario)
+    db.commit()

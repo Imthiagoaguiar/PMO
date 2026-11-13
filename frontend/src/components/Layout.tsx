@@ -1,9 +1,10 @@
-import { ChevronDown, FolderKanban, KeyRound, ListChecks, LogOut, ScrollText, Users } from "lucide-react"
+import { ChevronDown, FolderKanban, KeyRound, ListChecks, LogOut, ScrollText, ShieldCheck, Users } from "lucide-react"
 import { useState } from "react"
 import { NavLink, Outlet, useNavigate } from "react-router"
 
 import { AlterarSenha } from "@/components/AlterarSenha"
 import { NOMES_PAPEL_USUARIO } from "@/components/comum"
+import { DoisFatoresDialog } from "@/components/DoisFatores"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -38,6 +39,7 @@ export function Layout() {
   const { sair } = useAuth()
   const navigate = useNavigate()
   const [alterandoSenha, setAlterandoSenha] = useState(false)
+  const [configurando2fa, setConfigurando2fa] = useState(false)
   const admin = usuario.papel === "admin"
 
   async function encerrar() {
@@ -83,6 +85,12 @@ export function Layout() {
                   <KeyRound /> Alterar senha
                 </DropdownMenuItem>
               )}
+              {usuario.provedor_auth === "local" && (
+                <DropdownMenuItem onSelect={() => setConfigurando2fa(true)}>
+                  <ShieldCheck /> Verificação em duas etapas
+                  {usuario.dois_fatores_ativo && <span className="ml-auto text-xs text-emerald-600">ativa</span>}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={encerrar}>
                 <LogOut /> Sair
               </DropdownMenuItem>
@@ -94,6 +102,7 @@ export function Layout() {
         <Outlet />
       </main>
       <AlterarSenha aberto={alterandoSenha} aoFechar={() => setAlterandoSenha(false)} />
+      <DoisFatoresDialog aberto={configurando2fa} aoFechar={() => setConfigurando2fa(false)} />
     </div>
   )
 }

@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     # caracteres do hash SHA-1 saem do servidor; a senha nunca é enviada).
     verificar_senhas_vazadas: bool = True
 
+    # Verificação em duas etapas (TOTP). Admins com login local são obrigados a ativar.
+    exigir_2fa_admin: bool = True
+    # Chave Fernet que cifra os segredos TOTP no banco. Gere com:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Separada da SECRET_KEY de propósito: trocar a SECRET_KEY não pode apagar o 2FA de todos.
+    # Em dev, se vazia, é derivada da SECRET_KEY; em produção é obrigatória.
+    chave_2fa: Optional[str] = None
+
     # ---------- Integrações externas (todas opcionais: sem a chave, a integração fica desligada) ----------
 
     # Clerk: "Frontend API URL" da instância (Dashboard > API keys), ex.: https://xxx.clerk.accounts.dev
@@ -63,6 +71,8 @@ class Settings(BaseSettings):
                 raise ValueError("COOKIE_SECURE deve ser true em produção.")
             if any(o == "*" for o in self.cors_origens):
                 raise ValueError("CORS_ORIGENS não pode conter '*' em produção.")
+            if not self.chave_2fa:
+                raise ValueError("CHAVE_2FA é obrigatória em produção.")
         if self.clerk_emissor:
             self.clerk_emissor = self.clerk_emissor.rstrip("/")
             if not self.clerk_emissor.startswith("https://"):

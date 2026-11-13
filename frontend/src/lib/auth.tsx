@@ -7,7 +7,9 @@ import type { Usuario } from "@/lib/tipos"
 interface Auth {
   usuario: Usuario | null
   carregando: boolean
-  entrar: (email: string, senha: string) => Promise<void>
+  /** Retorna o desafio quando a conta usa 2FA (falta o código). */
+  entrar: (email: string, senha: string) => Promise<cliente.ResultadoLogin>
+  entrarComCodigo: (desafio: string, codigo: string) => Promise<void>
   sair: () => Promise<void>
   /** Limpa a sessão sem chamar a API (ex.: depois de trocar a senha, o back já revogou tudo). */
   encerrarLocalmente: () => void
@@ -50,7 +52,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [encerrarLocalmente])
 
   const entrar = useCallback(async (email: string, senha: string) => {
-    await cliente.entrar(email, senha)
+    const resultado = await cliente.entrar(email, senha)
+    if (!resultado.requer2fa) setUsuario(await cliente.api<Usuario>("/auth/me"))
+    return resultado
+  }, [])
+
+  const entrarComCodigo = useCallback(async (desafio: string, codigo: string) => {
+    await cliente.entrarComCodigo(desafio, codigo)
     setUsuario(await cliente.api<Usuario>("/auth/me"))
   }, [])
 
@@ -63,8 +71,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [encerrarLocalmente])
 
   const valor = useMemo(
-    () => ({ usuario, carregando, entrar, sair, encerrarLocalmente }),
-    [usuario, carregando, entrar, sair, encerrarLocalmente],
+    () => ({ usuario, carregando, entrar, entrarComCodigo, sair, encerrarLocalmente }),
+    [usuario, carregando, entrar, entrarComCodigo, sair, encerrarLocalmente],
   )
   return <AuthContext.Provider value={valor}>{children}</AuthContext.Provider>
 }

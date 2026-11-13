@@ -94,9 +94,37 @@ class Usuario(Base):
     # e todos os tokens já emitidos deixam de valer na hora (comparação exata, sem depender do relógio).
     versao_sessao: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
+    # Verificação em duas etapas (TOTP). O segredo fica cifrado (app/cripto.py): um vazamento do
+    # banco não permite gerar códigos. Enquanto totp_ativo é False, o segredo é só uma tentativa
+    # de configuração em andamento.
+    totp_ativo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    totp_segredo_cifrado: Mapped[Optional[str]] = mapped_column(Text)
+    # Último passo de 30 s aceito: o mesmo código não vale duas vezes (nem dentro da validade).
+    totp_ultimo_passo: Mapped[Optional[int]] = mapped_column(Integer)
+
+    codigos_recuperacao: Mapped[List["CodigoRecuperacao"]] = relationship(
+        back_populates="usuario", cascade="all, delete-orphan"
+    )
+
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    @property
+    def dois_fatores_ativo(self) -> bool:
+        return self.totp_ativo
+
+    @property
+    def exige_configurar_2fa(self) -> bool:
+        """Admin com login local sem 2FA: só consegue configurar o 2FA até ativá-lo."""
+        from app.config import settings
+
+        return (
+            settings.exigir_2fa_admin
+            and self.papel == PapelUsuario.ADMIN
+            and self.provedor_auth == ProvedorAuth.LOCAL  # Clerk: o 2FA é configurado no Clerk
+            and not self.totp_ativo
+        )
 
     @property
     def aguardando_primeiro_login(self) -> bool:
@@ -110,6 +138,21 @@ class Usuario(Base):
             name="ck_usuario_local_tem_senha",
         ),
     )
+
+
+class CodigoRecuperacao(Base):
+    """Códigos de uso único para entrar sem o celular. Guardados só como hash (SHA-256)."""
+
+    __tablename__ = "codigos_recuperacao"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    codigo_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    usado_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    usuario: Mapped["Usuario"] = relationship(back_populates="codigos_recuperacao")
 
 
 class RefreshToken(Base):

@@ -9,6 +9,7 @@ os.environ["SECRET_KEY"] = "chave-de-teste-" + "x" * 40
 os.environ["COOKIE_SECURE"] = "false"  # o TestClient usa http://
 os.environ["AMBIENTE"] = "dev"
 os.environ["VERIFICAR_SENHAS_VAZADAS"] = "false"  # nenhum teste acessa a internet
+os.environ["EXIGIR_2FA_ADMIN"] = "false"  # ligado só nos testes de 2FA (test_dois_fatores.py)
 
 from typing import Callable, Dict  # noqa: E402
 

@@ -62,6 +62,9 @@ Sem a variável, a integração fica desligada. Detalhes em `.env.example`.
 - Senhas: Argon2id; mínimo de 12 caracteres; recusa senhas previsíveis, com nome/e-mail ou vazadas (HIBP).
 - Sessão: JWT de 15 min + refresh token rotativo em cookie httpOnly; trocar a senha ou "encerrar sessões" invalida na hora até os tokens já emitidos.
 - Senha definida pelo admin (cadastro ou redefinição) obriga a troca no próximo login.
+- Verificação em duas etapas (TOTP, app autenticador) com 10 códigos de recuperação de uso único.
+  Obrigatória para admin com login local; opcional para os demais. O segredo fica cifrado no banco
+  (`CHAVE_2FA`, obrigatória em produção — não a troque depois que alguém ativar o 2FA).
 - Login: mesma resposta para qualquer falha; bloqueio por e-mail + IP e por conta; limite por IP.
 - Requisições limitadas a 1 MB (upload de planilha: 5 MB), inclusive envios em partes.
 - Verifique CVEs nas dependências: `python -m pip_audit` e `cd frontend && npm audit`.

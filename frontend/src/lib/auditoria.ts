@@ -23,10 +23,16 @@ export const ACOES: Record<string, string> = {
   "auth.login_barrado": "tentou entrar durante um bloqueio",
   "auth.senha_alterada": "alterou a senha",
   "auth.reuso_refresh_token": "teve as sessões revogadas (reuso de token)",
+  "auth.2fa_falhou": "errou o código da verificação em duas etapas",
+  "auth.2fa_ativado": "ativou a verificação em duas etapas",
+  "auth.2fa_desativado": "desativou a verificação em duas etapas",
+  "auth.codigo_recuperacao_usado": "entrou com um código de recuperação",
+  "auth.codigos_recuperacao_gerados": "gerou novos códigos de recuperação",
   "usuario.criado": "criou um usuário",
   "usuario.atualizado": "atualizou um usuário",
   "usuario.senha_redefinida": "redefiniu a senha de um usuário",
   "usuario.sessoes_encerradas": "encerrou as sessões de um usuário",
+  "usuario.2fa_redefinido": "redefiniu o 2FA de um usuário",
   "usuario.criado_via_clerk": "entrou pela primeira vez pelo Clerk",
   "usuario.vinculado_clerk": "vinculou a conta ao Clerk",
 }
@@ -56,6 +62,8 @@ const CAMPOS: Record<string, string> = {
   autor_id: "autor",
   provedor: "provedor",
   motivo: "motivo",
+  metodo: "método",
+  restantes: "códigos restantes",
 }
 
 function valor(v: unknown): string {

@@ -13,7 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import auditoria, senhas, services
+from app import auditoria, dois_fatores, senhas, services
 from app.integracoes import clerk
 from app.database import get_db
 from app.deps import Paginacao, escapar_like, exigir_papel, paginar, salvar
@@ -194,5 +194,30 @@ def encerrar_sessoes(
     usuario = _obter(db, usuario_id)
     services.derrubar_sessoes(db, usuario)
     auditoria.registrar(db, "usuario.sessoes_encerradas", "usuario", usuario.id, usuario=admin,
+                        detalhes={"email": usuario.email})
+    salvar(db)
+
+
+@router.post("/{usuario_id}/redefinir-2fa", status_code=status.HTTP_204_NO_CONTENT)
+def redefinir_2fa(
+    usuario_id: int,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(somente_admin),
+) -> None:
+    """
+    Celular perdido e sem códigos de recuperação: desliga o 2FA da pessoa e derruba as sessões.
+    Confirme a identidade dela por outro canal antes. Se for admin, terá de ativar de novo ao entrar.
+    """
+    usuario = _obter(db, usuario_id)
+    if usuario.id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Peça a outro administrador para redefinir o seu 2FA.",
+        )
+    if not usuario.totp_ativo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Este usuário não usa verificação em duas etapas.")
+    dois_fatores.desativar(db, usuario)
+    services.derrubar_sessoes(db, usuario)
+    auditoria.registrar(db, "usuario.2fa_redefinido", "usuario", usuario.id, usuario=admin,
                         detalhes={"email": usuario.email})
     salvar(db)

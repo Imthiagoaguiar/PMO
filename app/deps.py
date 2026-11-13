@@ -96,7 +96,12 @@ def get_usuario_atual(usuario: Usuario = Depends(get_usuario_sessao)) -> Usuario
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Troque sua senha para continuar.",
-            headers={"X-Troca-De-Senha": "obrigatoria"},
+        )
+    if usuario.exige_configurar_2fa:
+        # Admin sem 2FA: só consegue ativá-lo (rotas /auth/2fa usam get_usuario_sessao).
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ative a verificação em duas etapas para continuar.",
         )
     return usuario
 

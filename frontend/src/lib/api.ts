@@ -151,9 +151,27 @@ export async function baixarArquivo(caminho: string, nomePadrao: string): Promis
   URL.revokeObjectURL(url)
 }
 
-export async function entrar(email: string, senha: string): Promise<void> {
+/** Resultado da 1ª etapa: sessão aberta, ou a senha foi aceita e falta o código do 2FA. */
+export type ResultadoLogin = { requer2fa: false } | { requer2fa: true; desafio: string }
+
+export async function entrar(email: string, senha: string): Promise<ResultadoLogin> {
   const form = new URLSearchParams({ username: email, password: senha })
-  const resposta = await api<{ access_token: string }>("/auth/login", { method: "POST", form, semRenovar: true })
+  const resposta = await api<{ access_token?: string; requer_2fa?: boolean; desafio?: string }>("/auth/login", {
+    method: "POST",
+    form,
+    semRenovar: true,
+  })
+  if (resposta.requer_2fa && resposta.desafio) return { requer2fa: true, desafio: resposta.desafio }
+  accessToken = resposta.access_token ?? null
+  return { requer2fa: false }
+}
+
+export async function entrarComCodigo(desafio: string, codigo: string): Promise<void> {
+  const resposta = await api<{ access_token: string }>("/auth/login/2fa", {
+    method: "POST",
+    json: { desafio, codigo },
+    semRenovar: true,
+  })
   accessToken = resposta.access_token
 }
 

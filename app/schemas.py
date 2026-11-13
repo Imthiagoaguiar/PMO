@@ -351,6 +351,8 @@ class UsuarioRead(UsuarioResumo):
         ..., description="Conta externa (Clerk) criada pelo admin que ainda não foi usada"
     )
     trocar_senha: bool = Field(..., description="Precisa trocar a senha antes de usar o sistema")
+    dois_fatores_ativo: bool
+    exige_configurar_2fa: bool = Field(..., description="Admin sem 2FA: precisa ativar antes de usar o sistema")
 
 
 class UsuarioCreate(BaseModel):
@@ -408,6 +410,49 @@ class TokenResposta(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expira_em_segundos: int
+
+
+# ---------- Verificação em duas etapas ----------
+
+
+class DesafioDoisFatores(BaseModel):
+    """Senha aceita, falta o código. Nenhuma sessão foi aberta ainda."""
+
+    requer_2fa: Literal[True] = True
+    desafio: str
+    expira_em_segundos: int
+
+
+class LoginDoisFatores(BaseModel):
+    desafio: str = Field(..., max_length=2000)
+    codigo: str = Field(..., min_length=6, max_length=20, description="6 dígitos do app ou um código de recuperação")
+
+
+class ConfirmarSenha(BaseModel):
+    senha: str = Field(..., max_length=SENHA_MAX)
+
+
+class ConfirmarSenhaECodigo(ConfirmarSenha):
+    codigo: str = Field(..., min_length=6, max_length=20)
+
+
+class CodigoDoisFatores(BaseModel):
+    codigo: str = Field(..., min_length=6, max_length=20)
+
+
+class ConfiguracaoDoisFatores(BaseModel):
+    segredo: str = Field(..., description="Para digitar no app, se não der para ler o QR code")
+    uri: str = Field(..., description="otpauth:// — vira o QR code no front")
+
+
+class CodigosRecuperacao(BaseModel):
+    codigos_recuperacao: List[str] = Field(..., description="Mostrados uma única vez")
+
+
+class StatusDoisFatores(BaseModel):
+    ativo: bool
+    obrigatorio: bool
+    codigos_restantes: int
 
 
 class MembroAdicionar(BaseModel):

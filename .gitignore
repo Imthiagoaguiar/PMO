@@ -13,3 +13,4 @@ venv/
 .idea/
 node_modules/
 dist/
+*.tsbuildinfo

@@ -88,6 +88,42 @@ def decodificar_access_token(token: str) -> TokenAcesso:
         raise jwt.InvalidTokenError("sub inválido") from exc
 
 
+# ---------- Desafio do 2FA (entre a senha certa e o código) ----------
+
+DESAFIO_2FA_MINUTOS = 5
+
+
+def criar_desafio_2fa(usuario_id: int, versao_sessao: int) -> str:
+    """Prova de que a senha foi aceita. Sozinho não dá acesso a nada: só serve em /auth/login/2fa."""
+    agora = agora_utc()
+    payload = {
+        "sub": str(usuario_id),
+        "type": "2fa",
+        "iss": settings.jwt_emissor,
+        "iat": agora,
+        "exp": agora + timedelta(minutes=DESAFIO_2FA_MINUTOS),
+        "jti": uuid.uuid4().hex,
+        "ver": versao_sessao,
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algoritmo)
+
+
+def decodificar_desafio_2fa(token: str) -> TokenAcesso:
+    payload = jwt.decode(
+        token,
+        settings.secret_key,
+        algorithms=[settings.jwt_algoritmo],
+        issuer=settings.jwt_emissor,
+        options={"require": ["sub", "type", "iss", "iat", "exp"]},
+    )
+    if payload["type"] != "2fa":  # um access token não serve como desafio (e vice-versa)
+        raise jwt.InvalidTokenError("Tipo de token inválido")
+    try:
+        return TokenAcesso(int(payload["sub"]), int(payload.get("ver", 0)))
+    except ValueError as exc:
+        raise jwt.InvalidTokenError("sub inválido") from exc
+
+
 # ---------- Refresh token (opaco, longa duração, cookie httpOnly) ----------
 
 

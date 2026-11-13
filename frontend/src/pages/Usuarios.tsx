@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { KeyRound, LogOut, MoreHorizontal, Plus, Search } from "lucide-react"
+import { KeyRound, LogOut, MoreHorizontal, Plus, Search, ShieldCheck, ShieldOff } from "lucide-react"
 import { useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
@@ -200,6 +200,15 @@ export function Usuarios() {
     onError: notificarErro,
   })
 
+  const redefinir2fa = useMutation({
+    mutationFn: (u: Usuario) => api(`/usuarios/${u.id}/redefinir-2fa`, { method: "POST" }),
+    onSuccess: (_, u) => {
+      queryClient.invalidateQueries({ queryKey: ["usuarios"] })
+      toast.success(`2FA de ${u.nome} desligado. ${u.papel === "admin" ? "Terá de ativar de novo ao entrar." : ""}`)
+    },
+    onError: notificarErro,
+  })
+
   const encerrarSessoes = useMutation({
     mutationFn: (u: Usuario) => api(`/usuarios/${u.id}/encerrar-sessoes`, { method: "POST" }),
     onSuccess: (_, u) => toast.success(`${u.nome} foi desconectado de todos os dispositivos.`),
@@ -282,6 +291,11 @@ export function Usuarios() {
                           <Badge variant="outline">{u.provedor_auth === "local" ? "E-mail e senha" : u.provedor_auth === "clerk" ? "Clerk" : u.provedor_auth}</Badge>
                           {u.aguardando_primeiro_login && <Badge variant="secondary">Aguardando 1º acesso</Badge>}
                           {u.trocar_senha && <Badge variant="secondary">Troca de senha pendente</Badge>}
+                          {u.dois_fatores_ativo && (
+                            <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+                              <ShieldCheck /> 2FA
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -324,6 +338,17 @@ export function Usuarios() {
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem disabled={souEu || u.provedor_auth !== "local"} onSelect={() => setRedefinindo(u)}>
                                 <KeyRound /> Redefinir senha
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={souEu || !u.dois_fatores_ativo}
+                                onSelect={() => {
+                                  const aviso =
+                                    `Desligar a verificação em duas etapas de ${u.nome}? Use só se a pessoa perdeu o celular E os códigos ` +
+                                    "de recuperação, depois de confirmar a identidade dela por outro canal."
+                                  if (window.confirm(aviso)) redefinir2fa.mutate(u)
+                                }}
+                              >
+                                <ShieldOff /> Redefinir 2FA
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
