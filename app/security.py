@@ -71,6 +71,9 @@ class TokenAcesso(NamedTuple):
     versao_sessao: int  # claim "ver"
 
 
+ID_MAXIMO = 2**31 - 1  # INTEGER do Postgres
+
+
 def decodificar_access_token(token: str) -> TokenAcesso:
     """Levanta jwt.InvalidTokenError se o token for inválido ou expirado."""
     payload = jwt.decode(
@@ -83,9 +86,13 @@ def decodificar_access_token(token: str) -> TokenAcesso:
     if payload["type"] != "access":
         raise jwt.InvalidTokenError("Tipo de token inválido")
     try:
-        return TokenAcesso(int(payload["sub"]), int(payload.get("ver", 0)))
-    except ValueError as exc:
-        raise jwt.InvalidTokenError("sub inválido") from exc
+        usuario_id, versao = int(payload["sub"]), int(payload.get("ver", 0))
+    except (TypeError, ValueError) as exc:  # "abc", [1], {"a": 1}...
+        raise jwt.InvalidTokenError("sub/ver inválido") from exc
+    if not 0 < usuario_id <= ID_MAXIMO:
+        # Um id fora do INTEGER do banco estouraria na consulta (erro 500 em vez de 401).
+        raise jwt.InvalidTokenError("sub fora do intervalo")
+    return TokenAcesso(usuario_id, versao)
 
 
 # ---------- Desafio do 2FA (entre a senha certa e o código) ----------
@@ -119,9 +126,13 @@ def decodificar_desafio_2fa(token: str) -> TokenAcesso:
     if payload["type"] != "2fa":  # um access token não serve como desafio (e vice-versa)
         raise jwt.InvalidTokenError("Tipo de token inválido")
     try:
-        return TokenAcesso(int(payload["sub"]), int(payload.get("ver", 0)))
-    except ValueError as exc:
-        raise jwt.InvalidTokenError("sub inválido") from exc
+        usuario_id, versao = int(payload["sub"]), int(payload.get("ver", 0))
+    except (TypeError, ValueError) as exc:  # "abc", [1], {"a": 1}...
+        raise jwt.InvalidTokenError("sub/ver inválido") from exc
+    if not 0 < usuario_id <= ID_MAXIMO:
+        # Um id fora do INTEGER do banco estouraria na consulta (erro 500 em vez de 401).
+        raise jwt.InvalidTokenError("sub fora do intervalo")
+    return TokenAcesso(usuario_id, versao)
 
 
 # ---------- Refresh token (opaco, longa duração, cookie httpOnly) ----------

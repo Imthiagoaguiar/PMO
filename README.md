@@ -41,11 +41,27 @@ Acesse por `localhost` (não `127.0.0.1`): o cookie de sessão depende de front 
 ## Testes
 
 ```bash
-python -m pytest -q                                   # SQLite temporário
+python -m pytest -q                                   # SQLite em memória (chaves estrangeiras ligadas)
+python -m pytest tests/criticos -q                    # só os cenários críticos
 TEST_DATABASE_URL=postgresql+psycopg2://... pytest -q  # Postgres descartável (as tabelas são apagadas!)
 ```
 
 As APIs externas são simuladas nos testes; nenhum teste acessa a rede.
+
+```
+tests/
+├── conftest.py                      # banco limpo por teste, client, criar_usuario, login
+├── criticos/                        # cenários críticos (casos limite)
+│   ├── conftest.py                  # mocks de Brasil API / Groq / Clerk, helpers de upload e de banco
+│   ├── test_importacao_resiliencia.py
+│   ├── test_apis_externas.py
+│   ├── test_autenticacao_estrita.py # inclui o inventário: toda rota nova nasce exigindo token
+│   └── test_waterfall.py            # confere as 5 fases direto no banco
+├── test_bordas.py                   # casos de borda encontrados na caça a bugs
+├── test_seguranca.py, test_contas.py, test_dois_fatores.py, test_robustez.py
+├── test_permissoes.py, test_cronograma.py, test_operacao.py
+└── test_integracoes.py
+```
 
 ## Integrações (opcionais)
 

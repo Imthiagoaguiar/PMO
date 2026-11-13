@@ -233,6 +233,9 @@ def _ler_csv(conteudo: bytes) -> pd.DataFrame:
             return pd.read_csv(
                 io.BytesIO(conteudo), sep=None, engine="python", dtype=str, encoding=encoding,
                 keep_default_na=False, na_values=[""],
+                # Linhas em branco viram linhas vazias (descartadas depois pelo dropna) em vez de
+                # sumir: senão o "Linha N" do erro aponta para a linha errada da planilha.
+                skip_blank_lines=False,
             )
         except UnicodeDecodeError:
             continue

@@ -1,10 +1,9 @@
 import os
-import tempfile
 
 # Configuração precisa existir ANTES de importar a aplicação.
-_db_dir = tempfile.mkdtemp(prefix="pmo-tests-")
+# Padrão: SQLite em memória (rápido, some ao fim da execução; chaves estrangeiras ligadas em app/database.py).
 # Use TEST_DATABASE_URL para rodar contra um Postgres descartável (NUNCA o banco real: as tabelas são apagadas).
-os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", f"sqlite:///{_db_dir}/test.db")
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "sqlite://")
 os.environ["SECRET_KEY"] = "chave-de-teste-" + "x" * 40
 os.environ["COOKIE_SECURE"] = "false"  # o TestClient usa http://
 os.environ["AMBIENTE"] = "dev"

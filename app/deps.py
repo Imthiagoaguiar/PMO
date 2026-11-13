@@ -1,7 +1,7 @@
 """Dependências e helpers compartilhados pelos routers: autenticação, autorização, paginação."""
 
 import logging
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 import jwt
 from fastapi import Depends, HTTPException, Query, status
@@ -27,7 +27,9 @@ from app.security import decodificar_access_token
 
 logger = logging.getLogger(__name__)
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# auto_error=False: sem o header, quem responde é get_usuario_sessao (mesma mensagem em português
+# para todos os casos), e não o "Not authenticated" padrão do FastAPI.
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 STATUS_ENCERRADOS = {StatusProjeto.CONCLUIDO, StatusProjeto.CANCELADO}
 
@@ -52,7 +54,7 @@ def salvar(db: Session) -> None:
 
 
 def get_usuario_sessao(
-    token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
+    token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ) -> Usuario:
     """Usuário do token, SEM exigir a troca de senha pendente (só para /auth/me e /auth/alterar-senha)."""
     nao_autenticado = HTTPException(
@@ -60,6 +62,8 @@ def get_usuario_sessao(
         detail="Não autenticado.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if not token:
+        raise nao_autenticado
     # Aceita dois emissores: o login próprio (HS256, /auth/login) e o Clerk (RS256), cada um
     # com o seu validador e algoritmo fixo. O token do Clerk só é aceito se CLERK_EMISSOR existir.
     if clerk.emitido_pelo_clerk(token):
