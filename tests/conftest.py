@@ -8,6 +8,7 @@ os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", f"sqlite:///{_d
 os.environ["SECRET_KEY"] = "chave-de-teste-" + "x" * 40
 os.environ["COOKIE_SECURE"] = "false"  # o TestClient usa http://
 os.environ["AMBIENTE"] = "dev"
+os.environ["VERIFICAR_SENHAS_VAZADAS"] = "false"  # nenhum teste acessa a internet
 
 from typing import Callable, Dict  # noqa: E402
 

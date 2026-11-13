@@ -20,10 +20,13 @@ export const ACOES: Record<string, string> = {
   "auth.logout": "saiu do sistema",
   "auth.login_falhou": "errou a senha",
   "auth.conta_bloqueada": "teve a conta bloqueada por tentativas",
+  "auth.login_barrado": "tentou entrar durante um bloqueio",
   "auth.senha_alterada": "alterou a senha",
   "auth.reuso_refresh_token": "teve as sessões revogadas (reuso de token)",
   "usuario.criado": "criou um usuário",
   "usuario.atualizado": "atualizou um usuário",
+  "usuario.senha_redefinida": "redefiniu a senha de um usuário",
+  "usuario.sessoes_encerradas": "encerrou as sessões de um usuário",
   "usuario.criado_via_clerk": "entrou pela primeira vez pelo Clerk",
   "usuario.vinculado_clerk": "vinculou a conta ao Clerk",
 }
@@ -52,6 +55,7 @@ const CAMPOS: Record<string, string> = {
   tarefa_id: "tarefa",
   autor_id: "autor",
   provedor: "provedor",
+  motivo: "motivo",
 }
 
 function valor(v: unknown): string {

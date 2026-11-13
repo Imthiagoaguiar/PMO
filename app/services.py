@@ -123,6 +123,12 @@ def adicionar_cronograma(projeto: Projeto, fases: List[FaseNova], inicio: Option
 # ---------- Sessões ----------
 
 
+def derrubar_sessoes(db: Session, usuario: Usuario) -> None:
+    """Revoga os refresh tokens e invalida na hora os access tokens já emitidos (versão da sessão)."""
+    usuario.versao_sessao += 1
+    revogar_sessoes(db, usuario.id)
+
+
 def revogar_sessoes(db: Session, usuario_id: int) -> None:
     """Invalida todos os refresh tokens ativos do usuário (logout em todos os dispositivos)."""
     db.execute(

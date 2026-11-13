@@ -8,6 +8,7 @@ from sqlalchemy import text
 from app.auditoria import ip_requisicao
 from app.config import settings
 from app.database import engine
+from app.limites import KB, MB, LimiteCorpo
 from app.routers import auditoria, auth, comentarios, projetos, tarefas, usuarios
 
 EM_PRODUCAO = settings.ambiente == "prod"
@@ -36,6 +37,11 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
     expose_headers=["Content-Disposition", "Retry-After"],  # o front precisa ler o nome do .xlsx exportado
 )
+
+
+# JSON comum: 1 MB sobra (300 tarefas com descrição longa dão ~200 KB).
+# Importação: 5 MB de planilha + a sobra do multipart.
+app.add_middleware(LimiteCorpo, padrao=1 * MB, por_rota={"/projetos/importar": 5 * MB + 64 * KB})
 
 
 @app.middleware("http")

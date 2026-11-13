@@ -57,9 +57,11 @@ def test_login_invalido_tem_mensagem_generica(client, criar_usuario):
 def test_bloqueio_apos_tentativas(client, criar_usuario):
     criar_usuario(MEMBRO)
     for _ in range(settings.max_tentativas_login):
-        client.post("/auth/login", data={"username": MEMBRO, "password": "errada-errada"})
+        errada = client.post("/auth/login", data={"username": MEMBRO, "password": "errada-errada"})
     r = client.post("/auth/login", data={"username": MEMBRO, "password": SENHA})
-    assert r.status_code == 429  # bloqueado mesmo com a senha correta
+    # Barrado mesmo com a senha correta, e com a mesma resposta de senha errada (não revela o bloqueio).
+    assert r.status_code == 401
+    assert r.json() == errada.json()
 
 
 def test_usuario_desativado_perde_acesso_na_hora(client, criar_usuario, login):

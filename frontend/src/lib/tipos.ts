@@ -26,6 +26,7 @@ export interface Usuario extends UsuarioResumo {
   ativo: boolean
   provedor_auth: ProvedorAuth
   aguardando_primeiro_login: boolean
+  trocar_senha: boolean
 }
 
 export interface Tarefa {

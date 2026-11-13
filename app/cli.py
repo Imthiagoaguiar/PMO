@@ -1,8 +1,8 @@
 """
 Comandos administrativos.
 
-    python3 -m app.cli criar-admin --email admin@empresa.com.br --nome "Administrador"
-    python3 -m app.cli limpar-tokens
+    python -m app.cli criar-admin --email admin@empresa.com.br --nome "Administrador"
+    python -m app.cli limpar-tokens
 
 `criar-admin` pede a senha no terminal (não fica no histórico do shell).
 `limpar-tokens` apaga refresh tokens vencidos ou revogados — agende para rodar 1x por dia (cron).
@@ -16,6 +16,7 @@ from datetime import timedelta
 from pydantic import ValidationError
 from sqlalchemy import delete, or_, select
 
+from app import senhas
 from app.database import SessionLocal
 from app.models import PapelUsuario, RefreshToken, Usuario
 from app.schemas import UsuarioCreate
@@ -34,6 +35,11 @@ def criar_admin(email: str, nome: str) -> None:
         dados = UsuarioCreate(email=email, nome=nome, senha=senha, papel=PapelUsuario.ADMIN)
     except ValidationError as exc:
         sys.exit(f"Dados inválidos:\n{exc}")
+
+    try:
+        senhas.validar_senha(senha, dados.email, dados.nome)
+    except senhas.SenhaFraca as exc:
+        sys.exit(str(exc))
 
     with SessionLocal() as db:
         if db.scalar(select(Usuario).where(Usuario.email == dados.email)):

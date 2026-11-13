@@ -51,9 +51,10 @@ def salvar(db: Session) -> None:
 # ---------- Autenticação ----------
 
 
-def get_usuario_atual(
+def get_usuario_sessao(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ) -> Usuario:
+    """Usuário do token, SEM exigir a troca de senha pendente (só para /auth/me e /auth/alterar-senha)."""
     nao_autenticado = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Não autenticado.",
@@ -73,15 +74,30 @@ def get_usuario_atual(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     else:
         try:
-            usuario_id = decodificar_access_token(token)
+            acesso = decodificar_access_token(token)
         except jwt.InvalidTokenError:
             raise nao_autenticado
-        usuario = db.get(Usuario, usuario_id)
+        usuario = db.get(Usuario, acesso.usuario_id)
+        # Troca de senha / "encerrar sessões": tokens emitidos antes disso deixam de valer na hora,
+        # sem esperar os 15 minutos de validade.
+        if usuario is not None and acesso.versao_sessao != usuario.versao_sessao:
+            raise nao_autenticado
 
     # Busca no banco a cada requisição: desativar um usuário corta o acesso na hora,
     # e o papel vem sempre do banco (nunca confiamos no que está dentro do token).
     if usuario is None or not usuario.ativo:
         raise nao_autenticado
+    return usuario
+
+
+def get_usuario_atual(usuario: Usuario = Depends(get_usuario_sessao)) -> Usuario:
+    if usuario.trocar_senha:
+        # Senha definida pelo admin: nada funciona até a pessoa escolher a própria senha.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Troque sua senha para continuar.",
+            headers={"X-Troca-De-Senha": "obrigatoria"},
+        )
     return usuario
 
 

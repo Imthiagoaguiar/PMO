@@ -13,12 +13,16 @@ MVP de PMO para projetos Waterfall.
 
 ### API
 
+Requer **Python 3.11+** (o projeto usa 3.14, ver `.python-version`): as versões corrigidas de várias
+dependências não existem para Python antigo, e a API se recusa a subir nele.
+
 ```bash
+python3.14 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env            # preencha SECRET_KEY e DATABASE_URL
 alembic upgrade head            # cria/atualiza as tabelas
-python3 -m app.cli criar-admin --email admin@empresa.com.br --nome "Admin"
-python3 -m uvicorn app.main:app --reload
+python -m app.cli criar-admin --email admin@empresa.com.br --nome "Admin"
+python -m uvicorn app.main:app --reload
 ```
 
 Documentação interativa (só em `AMBIENTE=dev`): http://localhost:8000/docs
@@ -37,7 +41,7 @@ Acesse por `localhost` (não `127.0.0.1`): o cookie de sessão depende de front 
 ## Testes
 
 ```bash
-python3 -m pytest -q                                   # SQLite temporário
+python -m pytest -q                                   # SQLite temporário
 TEST_DATABASE_URL=postgresql+psycopg2://... pytest -q  # Postgres descartável (as tabelas são apagadas!)
 ```
 
@@ -53,6 +57,15 @@ Sem a variável, a integração fica desligada. Detalhes em `.env.example`.
 | `GROQ_API_KEY`, `GROQ_MODELO` | `POST /projetos/ia` |
 | `RESEND_API_KEY`, `EMAIL_REMETENTE` | E-mail ao criar projeto |
 
+## Segurança
+
+- Senhas: Argon2id; mínimo de 12 caracteres; recusa senhas previsíveis, com nome/e-mail ou vazadas (HIBP).
+- Sessão: JWT de 15 min + refresh token rotativo em cookie httpOnly; trocar a senha ou "encerrar sessões" invalida na hora até os tokens já emitidos.
+- Senha definida pelo admin (cadastro ou redefinição) obriga a troca no próximo login.
+- Login: mesma resposta para qualquer falha; bloqueio por e-mail + IP e por conta; limite por IP.
+- Requisições limitadas a 1 MB (upload de planilha: 5 MB), inclusive envios em partes.
+- Verifique CVEs nas dependências: `python -m pip_audit` e `cd frontend && npm audit`.
+
 ## Manutenção
 
-Agende diariamente: `python3 -m app.cli limpar-tokens` (remove refresh tokens expirados).
+Agende diariamente: `python -m app.cli limpar-tokens` (remove refresh tokens expirados).

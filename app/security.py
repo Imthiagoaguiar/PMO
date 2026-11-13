@@ -4,7 +4,7 @@ import hashlib
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import NamedTuple, Optional, Tuple
 
 import jwt
 from argon2 import PasswordHasher
@@ -52,7 +52,7 @@ def precisa_rehash(hash_senha: str) -> bool:
 # ---------- Access token (JWT, curta duração, enviado no header Authorization) ----------
 
 
-def criar_access_token(usuario_id: int) -> str:
+def criar_access_token(usuario_id: int, versao_sessao: int = 0) -> str:
     agora = agora_utc()
     payload = {
         "sub": str(usuario_id),
@@ -61,12 +61,18 @@ def criar_access_token(usuario_id: int) -> str:
         "iat": agora,
         "exp": agora + timedelta(minutes=settings.access_token_minutos),
         "jti": uuid.uuid4().hex,
+        "ver": versao_sessao,
     }
     return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algoritmo)
 
 
-def decodificar_access_token(token: str) -> int:
-    """Retorna o id do usuário. Levanta jwt.InvalidTokenError se o token for inválido ou expirado."""
+class TokenAcesso(NamedTuple):
+    usuario_id: int
+    versao_sessao: int  # claim "ver"
+
+
+def decodificar_access_token(token: str) -> TokenAcesso:
+    """Levanta jwt.InvalidTokenError se o token for inválido ou expirado."""
     payload = jwt.decode(
         token,
         settings.secret_key,
@@ -77,7 +83,7 @@ def decodificar_access_token(token: str) -> int:
     if payload["type"] != "access":
         raise jwt.InvalidTokenError("Tipo de token inválido")
     try:
-        return int(payload["sub"])
+        return TokenAcesso(int(payload["sub"]), int(payload.get("ver", 0)))
     except ValueError as exc:
         raise jwt.InvalidTokenError("sub inválido") from exc
 

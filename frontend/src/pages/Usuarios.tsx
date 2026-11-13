@@ -1,12 +1,20 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Plus, Search } from "lucide-react"
+import { KeyRound, LogOut, MoreHorizontal, Plus, Search } from "lucide-react"
 import { useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
 import { Cabecalho, Campo, Carregando, ErroCarregar, NOMES_PAPEL_USUARIO, Paginacao, Vazio } from "@/components/comum"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { DICA_SENHA } from "@/components/AlterarSenha"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -41,7 +49,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
     onSuccess: (u) => {
       queryClient.invalidateQueries({ queryKey: ["usuarios"] })
       toast.success(
-        provedor === "local" ? `${u.nome} criado. Envie a senha inicial por um canal seguro.` : `${u.nome} poderá entrar pelo Clerk com ${u.email}.`,
+        provedor === "local" ? `${u.nome} criado. Envie a senha temporária por um canal seguro.` : `${u.nome} poderá entrar pelo Clerk com ${u.email}.`,
       )
       aoFechar()
     },
@@ -96,7 +104,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
             </Select>
           </Campo>
           {provedor === "local" && (
-            <Campo label="Senha inicial" htmlFor="u-senha" dica="Mínimo de 12 caracteres. Peça para a pessoa trocar no primeiro acesso.">
+            <Campo label="Senha temporária" htmlFor="u-senha" dica={`A pessoa será obrigada a trocá-la no primeiro acesso. ${DICA_SENHA}`}>
               <Input id="u-senha" type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={senha} onChange={(e) => setSenha(e.target.value)} />
             </Campo>
           )}
@@ -114,6 +122,52 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
   )
 }
 
+function RedefinirSenha({ usuario, aoFechar }: { usuario: Usuario; aoFechar: () => void }) {
+  const queryClient = useQueryClient()
+  const [senha, setSenha] = useState("")
+
+  const redefinir = useMutation({
+    mutationFn: () => api(`/usuarios/${usuario.id}/redefinir-senha`, { method: "POST", json: { nova_senha: senha } }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["usuarios"] })
+      toast.success(`Senha de ${usuario.nome} redefinida. Envie a senha temporária por um canal seguro.`)
+      aoFechar()
+    },
+    onError: notificarErro,
+  })
+
+  function enviar(e: FormEvent) {
+    e.preventDefault()
+    redefinir.mutate()
+  }
+
+  return (
+    <Dialog open onOpenChange={(abrir) => !abrir && aoFechar()}>
+      <DialogContent className="sm:max-w-md">
+        <form onSubmit={enviar} className="grid gap-4">
+          <DialogHeader>
+            <DialogTitle>Redefinir senha de {usuario.nome}</DialogTitle>
+            <DialogDescription>
+              As sessões abertas caem na hora, o bloqueio por tentativas é desfeito e a pessoa precisa trocar a senha no próximo login.
+            </DialogDescription>
+          </DialogHeader>
+          <Campo label="Senha temporária" htmlFor="r-senha" dica={DICA_SENHA}>
+            <Input id="r-senha" type="password" autoComplete="new-password" required minLength={12} maxLength={128} autoFocus value={senha} onChange={(e) => setSenha(e.target.value)} />
+          </Campo>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={aoFechar}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={redefinir.isPending || senha.length < 12}>
+              {redefinir.isPending ? "Redefinindo..." : "Redefinir senha"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function Usuarios() {
   const eu = useUsuario()
   const queryClient = useQueryClient()
@@ -121,6 +175,7 @@ export function Usuarios() {
   const [papel, setPapel] = useState("todos")
   const [offset, setOffset] = useState(0)
   const [criando, setCriando] = useState(false)
+  const [redefinindo, setRedefinindo] = useState<Usuario | null>(null)
   const termo = useAtrasado(busca.trim())
 
   const parametros = new URLSearchParams({ limite: String(LIMITE), offset: String(offset) })
@@ -142,6 +197,12 @@ export function Usuarios() {
       else if (dados.ativo === true) toast.success(`${u.nome} foi reativado.`)
       else toast.success(`${u.nome} agora é ${NOMES_PAPEL_USUARIO[u.papel].toLowerCase()}.`)
     },
+    onError: notificarErro,
+  })
+
+  const encerrarSessoes = useMutation({
+    mutationFn: (u: Usuario) => api(`/usuarios/${u.id}/encerrar-sessoes`, { method: "POST" }),
+    onSuccess: (_, u) => toast.success(`${u.nome} foi desconectado de todos os dispositivos.`),
     onError: notificarErro,
   })
 
@@ -220,6 +281,7 @@ export function Usuarios() {
                         <div className="flex flex-wrap gap-1">
                           <Badge variant="outline">{u.provedor_auth === "local" ? "E-mail e senha" : u.provedor_auth === "clerk" ? "Clerk" : u.provedor_auth}</Badge>
                           {u.aguardando_primeiro_login && <Badge variant="secondary">Aguardando 1º acesso</Badge>}
+                          {u.trocar_senha && <Badge variant="secondary">Troca de senha pendente</Badge>}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -240,18 +302,43 @@ export function Usuarios() {
                           </SelectContent>
                         </Select>
                       </TableCell>
-                      <TableCell className="pr-4 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={souEu || atualizar.isPending}
-                          onClick={() => {
-                            if (u.ativo && !window.confirm(`Desativar ${u.nome}? O acesso é cortado na hora.`)) return
-                            atualizar.mutate({ usuario: u, dados: { ativo: !u.ativo } })
-                          }}
-                        >
-                          {u.ativo ? "Desativar" : "Reativar"}
-                        </Button>
+                      <TableCell className="pr-4">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={souEu || atualizar.isPending}
+                            onClick={() => {
+                              if (u.ativo && !window.confirm(`Desativar ${u.nome}? O acesso é cortado na hora.`)) return
+                              atualizar.mutate({ usuario: u, dados: { ativo: !u.ativo } })
+                            }}
+                          >
+                            {u.ativo ? "Desativar" : "Reativar"}
+                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="icon-sm" variant="ghost" aria-label={`Mais ações para ${u.nome}`}>
+                                <MoreHorizontal />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem disabled={souEu || u.provedor_auth !== "local"} onSelect={() => setRedefinindo(u)}>
+                                <KeyRound /> Redefinir senha
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  const aviso = souEu
+                                    ? "Encerrar todas as SUAS sessões? Você também será desconectado aqui."
+                                    : `Desconectar ${u.nome} de todos os dispositivos?`
+                                  if (window.confirm(aviso)) encerrarSessoes.mutate(u)
+                                }}
+                              >
+                                <LogOut /> Encerrar sessões
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </TableCell>
                     </TableRow>
                   )
@@ -264,6 +351,7 @@ export function Usuarios() {
       )}
 
       {criando && <NovoUsuario aoFechar={() => setCriando(false)} />}
+      {redefinindo && <RedefinirSenha usuario={redefinindo} aoFechar={() => setRedefinindo(null)} />}
     </>
   )
 }

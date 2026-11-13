@@ -24,8 +24,16 @@ class Settings(BaseSettings):
     cors_origens: List[str] = ["http://localhost:5173"]
     cookie_secure: bool = True
 
+    # Bloqueio em duas camadas (a resposta é sempre a mesma: não revela se o e-mail existe):
+    # - e-mail + IP: barra quem chuta senhas de um lugar, sem travar o dono da conta em outro;
+    # - conta: barra ataque distribuído (muitos IPs) contra a mesma conta.
     max_tentativas_login: int = 5
+    max_tentativas_conta: int = 20
     bloqueio_minutos: int = 15
+
+    # Consulta senhas novas na base de vazamentos do Have I Been Pwned (só os 5 primeiros
+    # caracteres do hash SHA-1 saem do servidor; a senha nunca é enviada).
+    verificar_senhas_vazadas: bool = True
 
     # ---------- Integrações externas (todas opcionais: sem a chave, a integração fica desligada) ----------
 

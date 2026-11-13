@@ -350,6 +350,7 @@ class UsuarioRead(UsuarioResumo):
     aguardando_primeiro_login: bool = Field(
         ..., description="Conta externa (Clerk) criada pelo admin que ainda não foi usada"
     )
+    trocar_senha: bool = Field(..., description="Precisa trocar a senha antes de usar o sistema")
 
 
 class UsuarioCreate(BaseModel):
@@ -386,6 +387,10 @@ class UsuarioUpdate(BaseModel):
     nome: Optional[str] = Field(None, min_length=2, max_length=150)
     papel: Optional[PapelUsuario] = None
     ativo: Optional[bool] = None
+
+
+class RedefinirSenha(BaseModel):
+    nova_senha: str = Field(..., min_length=SENHA_MIN, max_length=SENHA_MAX, description="Senha temporária")
 
 
 class AlterarSenha(BaseModel):

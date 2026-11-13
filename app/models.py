@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -87,6 +88,11 @@ class Usuario(Base):
     # Proteção contra força bruta.
     tentativas_falhas: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     bloqueado_ate: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Senha definida pelo admin (cadastro ou redefinição): a pessoa precisa trocar antes de usar o sistema.
+    trocar_senha: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    # Vai no token de acesso (claim "ver"). Trocar a senha ou "encerrar sessões" incrementa o valor
+    # e todos os tokens já emitidos deixam de valer na hora (comparação exata, sem depender do relógio).
+    versao_sessao: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

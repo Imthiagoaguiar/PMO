@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "react-router"
 
+import { TrocaObrigatoria } from "@/components/AlterarSenha"
 import { Carregando } from "@/components/comum"
 import { Layout } from "@/components/Layout"
 import { useAuth } from "@/lib/auth"
@@ -18,6 +19,7 @@ function ComSessao({ children }: { children: ReactNode }) {
   const location = useLocation()
   if (carregando) return <Carregando texto="Verificando sua sessão..." />
   if (!usuario) return <Navigate to="/login" replace state={{ de: location.pathname + location.search }} />
+  if (usuario.trocar_senha) return <TrocaObrigatoria />
   return children
 }
 
