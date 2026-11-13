@@ -2,6 +2,7 @@
 
 import io
 
+import openpyxl
 import pandas as pd
 import pytest
 
@@ -181,11 +182,13 @@ def test_exportar_e_reimportar(client, cenario):
 
     r = client.get(f"/projetos/{p['id']}/exportar", headers=h["membro"])
     assert r.status_code == 200
-    assert r.headers["content-disposition"] == 'attachment; filename="ERP.xlsx"'
+    assert r.headers["content-disposition"].startswith('attachment; filename="ERP.xlsx"')
 
     df = pd.read_excel(io.BytesIO(r.content))
     assert list(df.columns) == ["Fase", "Descrição", "Data Início", "Data Fim", "Responsável", "% Conclusão"]
-    assert df.loc[0, "Descrição"].startswith("'=")  # fórmula neutralizada
+    assert df.loc[0, "Descrição"] == "=HYPERLINK(\"http://malicioso\")"  # texto intacto...
+    celula = openpyxl.load_workbook(io.BytesIO(r.content)).active["B2"]
+    assert celula.data_type == "s" and celula.quotePrefix  # ...mas gravado como texto, não fórmula
     assert df.loc[0, "Responsável"] == "membro"
     assert df.loc[1, "Responsável"] == "Fornecedor X"
 

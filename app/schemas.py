@@ -1,8 +1,9 @@
+import math
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar
+from typing import Annotated, Any, Dict, Generic, List, Literal, Optional, TypeVar
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.models import FASES_WATERFALL, PapelProjeto, PapelUsuario, ProvedorAuth, StatusProjeto
 from app.texto import normalizar
@@ -19,6 +20,19 @@ class Pagina(BaseModel, Generic[T]):
     total: int
     limite: int
     offset: int
+
+# Datas fora daqui são erro de digitação (ex.: 2062 em vez de 2026) e, perto do ano 9999,
+# somar dias úteis estoura o calendário do Python.
+DATA_MINIMA, DATA_MAXIMA = date(1900, 1, 1), date(2199, 12, 31)
+
+
+def _data_no_intervalo(v: date) -> date:
+    if not DATA_MINIMA <= v <= DATA_MAXIMA:
+        raise ValueError(f"data fora do intervalo aceito ({DATA_MINIMA.year} a {DATA_MAXIMA.year})")
+    return v
+
+
+DataProjeto = Annotated[date, AfterValidator(_data_no_intervalo)]
 
 # Formatos de data aceitos nas células de texto da planilha (CSV ou Excel com texto).
 FORMATOS_DATA = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y", "%Y-%m-%d %H:%M:%S")
@@ -58,7 +72,7 @@ class FaseNova(BaseModel):
 class ProjetoManualCreate(BaseModel):
     nome_projeto: str = Field(..., min_length=3, max_length=200)
     orcamento_aprovado: Optional[Decimal] = Field(None, ge=0, max_digits=14, decimal_places=2)
-    data_inicio: Optional[date] = Field(None, description="Também é o início do cronograma encadeado")
+    data_inicio: Optional[DataProjeto] = Field(None, description="Também é o início do cronograma encadeado")
     fases: List[FaseNova] = Field(
         default_factory=list, max_length=len(FASES_WATERFALL),
         description="Opcional: tarefas iniciais (o mesmo formato que POST /projetos/ia devolve)",
@@ -87,8 +101,8 @@ class TarefaPlanilha(BaseModel):
 
     fase: str = Field(..., min_length=1)
     descricao: str = Field(..., min_length=1, max_length=500)
-    data_inicio: Optional[date] = None
-    data_fim: Optional[date] = None
+    data_inicio: Optional[DataProjeto] = None
+    data_fim: Optional[DataProjeto] = None
     responsavel: Optional[str] = Field(None, max_length=150)
     percentual_conclusao: int = Field(0, ge=0, le=100)
 
@@ -126,9 +140,12 @@ class TarefaPlanilha(BaseModel):
         if isinstance(v, str):
             v = v.replace("%", "").replace(",", ".").strip()
         try:
-            return round(float(v))
+            numero = float(v)
         except (TypeError, ValueError):
             raise ValueError(f"percentual inválido '{v}'")
+        if not math.isfinite(numero):  # "inf", "nan", "1e400"
+            raise ValueError(f"percentual inválido '{v}'")
+        return math.floor(numero + 0.5)  # 50,5 -> 51 (round() do Python daria 50)
 
     @model_validator(mode="after")
     def _datas_coerentes(self) -> "TarefaPlanilha":
@@ -157,7 +174,7 @@ def _strip_ou_none(v: Any) -> Any:
 class ProjetoUpdate(BaseModel):
     nome_projeto: Optional[str] = Field(None, min_length=3, max_length=200)
     orcamento_aprovado: Optional[Decimal] = Field(None, ge=0, max_digits=14, decimal_places=2)
-    data_inicio: Optional[date] = None
+    data_inicio: Optional[DataProjeto] = None
     status: Optional[StatusProjeto] = None
 
     @field_validator("nome_projeto", mode="before")
@@ -173,8 +190,8 @@ class ProjetoUpdate(BaseModel):
 
 class TarefaCreate(BaseModel):
     descricao: str = Field(..., min_length=1, max_length=500)
-    data_inicio: Optional[date] = None
-    data_fim: Optional[date] = None
+    data_inicio: Optional[DataProjeto] = None
+    data_fim: Optional[DataProjeto] = None
     responsavel: Optional[str] = Field(None, max_length=150, description="Nome livre (pessoa sem conta)")
     responsavel_id: Optional[int] = Field(None, description="Usuário membro do projeto")
     percentual_conclusao: int = Field(0, ge=0, le=100)
@@ -203,8 +220,8 @@ class TarefaCreate(BaseModel):
 class TarefaUpdate(BaseModel):
     fase_id: Optional[int] = Field(None, description="Move a tarefa para outra fase do mesmo projeto")
     descricao: Optional[str] = Field(None, min_length=1, max_length=500)
-    data_inicio: Optional[date] = None
-    data_fim: Optional[date] = None
+    data_inicio: Optional[DataProjeto] = None
+    data_fim: Optional[DataProjeto] = None
     responsavel: Optional[str] = Field(None, max_length=150)
     responsavel_id: Optional[int] = Field(None, description="null remove o responsável")
     percentual_conclusao: Optional[int] = Field(None, ge=0, le=100)
@@ -389,6 +406,16 @@ class UsuarioUpdate(BaseModel):
     nome: Optional[str] = Field(None, min_length=2, max_length=150)
     papel: Optional[PapelUsuario] = None
     ativo: Optional[bool] = None
+
+    @field_validator("nome", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+    @model_validator(mode="after")
+    def _obrigatorios(self) -> "UsuarioUpdate":
+        _proibir_nulos(self, ("nome", "papel", "ativo"))
+        return self
 
 
 class RedefinirSenha(BaseModel):

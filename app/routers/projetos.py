@@ -4,7 +4,11 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
@@ -150,8 +154,8 @@ def sugerir_projeto_com_ia(
 def importar_projeto(
     tarefas_fundo: BackgroundTasks,
     arquivo: UploadFile = File(..., description="Planilha .xlsx ou .csv"),
-    nome_projeto: str = Form(..., min_length=3, max_length=200),
-    orcamento_aprovado: Optional[Decimal] = Form(None, ge=0),
+    nome_projeto: str = Form(..., max_length=300),
+    orcamento_aprovado: Optional[Decimal] = Form(None),
     data_inicio: Optional[date] = Form(None),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(pode_criar_projeto),
@@ -162,6 +166,14 @@ def importar_projeto(
     A importação é tudo-ou-nada: se qualquer linha for inválida, nada é gravado.
     """
     limite_importacao.por_usuario(usuario.id)
+    # Mesmas regras da criação manual (nome aparado, orçamento com 2 casas, datas plausíveis).
+    try:
+        dados = ProjetoManualCreate(
+            nome_projeto=nome_projeto, orcamento_aprovado=orcamento_aprovado, data_inicio=data_inicio
+        )
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors(include_url=False, include_context=False))
+
     conteudo = arquivo.file.read(MAX_TAMANHO_ARQUIVO + 1)
     if len(conteudo) > MAX_TAMANHO_ARQUIVO:
         raise HTTPException(
@@ -180,7 +192,7 @@ def importar_projeto(
         )
 
     projeto = services.criar_projeto_com_fases(
-        db, usuario, nome_projeto.strip(), orcamento_aprovado, data_inicio
+        db, usuario, dados.nome_projeto, dados.orcamento_aprovado, dados.data_inicio
     )
     services.adicionar_tarefas(projeto, tarefas)
     db.flush()
@@ -254,7 +266,7 @@ def exportar_projeto(
     return Response(
         content=conteudo,
         media_type=MIME_XLSX,
-        headers={"Content-Disposition": f'attachment; filename="{_nome_arquivo(projeto.nome_projeto)}.xlsx"'},
+        headers={"Content-Disposition": _content_disposition(projeto.nome_projeto + ".xlsx")},
     )
 
 
@@ -420,6 +432,19 @@ def remover_membro(
 
 
 # ---------- Helpers ----------
+
+
+def _content_disposition(nome: str) -> str:
+    """
+    RFC 6266: `filename` só em ASCII (navegadores antigos) e `filename*` com o nome real em UTF-8,
+    para "Implantação São Paulo.xlsx" não virar "Implantacao_Sao_Paulo.xlsx".
+    """
+    base, _, extensao = nome.rpartition(".")
+    real = re.sub(r'[\x00-\x1f\x7f"\\/]+', "_", base).strip()[:150] or "projeto"
+    return (
+        f'attachment; filename="{_nome_arquivo(base)}.{extensao}"; '
+        f"filename*=UTF-8''{quote(real + '.' + extensao)}"
+    )
 
 
 def _nome_arquivo(nome: str) -> str:

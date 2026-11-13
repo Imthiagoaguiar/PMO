@@ -6,8 +6,9 @@ import zipfile
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+import openpyxl
 import pandas as pd
 from pydantic import ValidationError
 from sqlalchemy import select, update
@@ -151,7 +152,7 @@ def ler_planilha(conteudo: bytes, nome_arquivo: str) -> pd.DataFrame:
             df = _ler_csv(conteudo)
         else:
             _verificar_xlsx(conteudo)
-            df = pd.read_excel(io.BytesIO(conteudo), engine="openpyxl")
+            df = _ler_xlsx(conteudo)
     except PlanilhaInvalida:
         raise
     except Exception as exc:  # pandas/openpyxl levantam vários tipos para arquivo corrompido
@@ -161,7 +162,13 @@ def ler_planilha(conteudo: bytes, nome_arquivo: str) -> pd.DataFrame:
             "Não foi possível ler o arquivo. Verifique se é uma planilha válida."
         ) from exc
 
-    df.columns = [ALIASES_COLUNAS.get(normalizar(str(c)).replace(" ", "_"), c) for c in df.columns]
+    originais = [str(c) for c in df.columns]
+    df.columns = [ALIASES_COLUNAS.get(normalizar(c).replace(" ", "_"), c) for c in originais]
+    repetidas = sorted({c for c in df.columns if list(df.columns).count(c) > 1})
+    if repetidas:
+        # Ex.: "Tarefa" e "Descrição" são a mesma coluna; ficar com uma delas em silêncio perderia dados.
+        grupos = [" e ".join(f"'{o}'" for o, c in zip(originais, df.columns) if c == r) for r in repetidas]
+        raise PlanilhaInvalida(f"Colunas repetidas na planilha: {'; '.join(grupos)}. Deixe só uma de cada.")
     faltando = COLUNAS_OBRIGATORIAS - set(df.columns)
     if faltando:
         raise PlanilhaInvalida(
@@ -188,12 +195,45 @@ def _verificar_xlsx(conteudo: bytes) -> None:
         raise PlanilhaInvalida("O conteúdo do .xlsx é grande demais para importação.")
 
 
+def _ler_xlsx(conteudo: bytes) -> pd.DataFrame:
+    """
+    Lê a primeira aba direto pelo openpyxl (e não pelo pandas) para enxergar o formato das células:
+    50% numa célula com formato de porcentagem é guardado como 0,5 e precisa virar 50.
+    """
+    livro = openpyxl.load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
+    try:
+        linhas = [[_valor_celula(c) for c in linha] for linha in livro.worksheets[0].iter_rows()]
+    finally:
+        livro.close()
+    if not linhas:
+        return pd.DataFrame()
+    cabecalho = linhas[0]
+    while cabecalho and cabecalho[-1] is None:  # colunas vazias à direita
+        cabecalho = cabecalho[:-1]
+    colunas = [str(c) if c is not None else f"coluna_{i + 1}" for i, c in enumerate(cabecalho)]
+    dados = [(linha + [None] * len(colunas))[: len(colunas)] for linha in linhas[1:]]
+    return pd.DataFrame(dados, columns=colunas, dtype=object)
+
+
+def _valor_celula(celula: Any) -> Any:
+    valor = celula.value
+    numero = isinstance(valor, (int, float)) and not isinstance(valor, bool)
+    if numero and "%" in (getattr(celula, "number_format", None) or ""):
+        return valor * 100
+    return valor
+
+
 def _ler_csv(conteudo: bytes) -> pd.DataFrame:
     # sep=None detecta ',' ou ';' (Excel em pt-BR exporta com ';').
     # dtype=str evita que o pandas "adivinhe" datas e números; o Pydantic faz a conversão.
     for encoding in ("utf-8-sig", "latin-1"):
         try:
-            return pd.read_csv(io.BytesIO(conteudo), sep=None, engine="python", dtype=str, encoding=encoding)
+            # Só célula vazia é "vazio": por padrão o pandas também apaga "NA", "null", "None"...
+            # e uma tarefa chamada "NA" sumiria.
+            return pd.read_csv(
+                io.BytesIO(conteudo), sep=None, engine="python", dtype=str, encoding=encoding,
+                keep_default_na=False, na_values=[""],
+            )
         except UnicodeDecodeError:
             continue
     raise PlanilhaInvalida("Codificação do CSV não reconhecida. Salve como UTF-8.")
@@ -294,15 +334,20 @@ def calcular_indicadores(projeto: Projeto, hoje: Optional[date] = None) -> Proje
 # ---------- Exportação ----------
 
 COLUNAS_EXPORTACAO = ["Fase", "Descrição", "Data Início", "Data Fim", "Responsável", "% Conclusão"]
-# Células que começam com estes caracteres podem ser interpretadas como fórmula pelo
-# Excel/LibreOffice (CSV/Formula Injection). Prefixar com ' força o conteúdo a ser texto.
+# Texto que começa com estes caracteres pode ser interpretado como fórmula (Formula Injection).
 CARACTERES_DE_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+COLUNAS_DE_TEXTO = ("B", "E")  # Descrição e Responsável: texto livre digitado pelas pessoas
 
 
-def _texto_seguro(valor: Optional[str]) -> Optional[str]:
-    if isinstance(valor, str) and valor.startswith(CARACTERES_DE_FORMULA):
-        return "'" + valor
-    return valor
+def _forcar_texto(celula: Any) -> None:
+    """
+    Grava a célula como TEXTO, sem alterar o conteúdo: o Excel mostra "=SOMA(A1)" em vez de
+    calcular, e "- revisar contrato" volta igual na reimportação (o antigo prefixo ' sujava o texto).
+    quotePrefix mantém a célula como texto mesmo se a pessoa a editar no Excel.
+    """
+    if isinstance(celula.value, str) and celula.value.startswith(CARACTERES_DE_FORMULA):
+        celula.data_type = "s"
+        celula.quotePrefix = True
 
 
 def exportar_planilha(projeto: Projeto) -> bytes:
@@ -310,12 +355,10 @@ def exportar_planilha(projeto: Projeto) -> bytes:
     linhas = [
         {
             "Fase": fase.titulo,
-            "Descrição": _texto_seguro(tarefa.descricao),
+            "Descrição": tarefa.descricao,
             "Data Início": tarefa.data_inicio,
             "Data Fim": tarefa.data_fim,
-            "Responsável": _texto_seguro(
-                tarefa.responsavel_usuario.nome if tarefa.responsavel_usuario else tarefa.responsavel
-            ),
+            "Responsável": tarefa.responsavel_usuario.nome if tarefa.responsavel_usuario else tarefa.responsavel,
             "% Conclusão": tarefa.percentual_conclusao,
         }
         for fase in projeto.fases
@@ -332,6 +375,9 @@ def exportar_planilha(projeto: Projeto) -> bytes:
         for coluna in ("C", "D"):
             for celula in planilha[coluna][1:]:
                 celula.number_format = "DD/MM/YYYY"
+        for coluna in COLUNAS_DE_TEXTO:
+            for celula in planilha[coluna][1:]:
+                _forcar_texto(celula)
     return buffer.getvalue()
 
 

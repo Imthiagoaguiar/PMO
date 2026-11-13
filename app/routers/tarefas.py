@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app import auditoria
 from app.database import get_db
-from app.integracoes.feriados import calcular_data_fim
+from app.integracoes.feriados import calcular_data_fim, proximo_dia_util
 from app.deps import (
     Paginacao,
     exigir_projeto_aberto,
@@ -82,7 +82,9 @@ def criar_tarefa(
 
     dados = payload.model_dump(exclude={"duracao_dias_uteis"})
     if payload.duracao_dias_uteis is not None:
-        dados["data_fim"] = calcular_data_fim(payload.data_inicio, payload.duracao_dias_uteis)
+        # Como no cronograma encadeado: começar num sábado/feriado é começar no próximo dia útil.
+        dados["data_inicio"] = proximo_dia_util(payload.data_inicio)
+        dados["data_fim"] = calcular_data_fim(dados["data_inicio"], payload.duracao_dias_uteis)
 
     tarefa = Tarefa(fase_id=fase.id, **dados)
     db.add(tarefa)
@@ -112,7 +114,8 @@ def atualizar_tarefa(
         inicio = alteracoes.get("data_inicio", tarefa.data_inicio)
         if inicio is None:
             raise HTTPException(status_code=422, detail="duracao_dias_uteis exige data_inicio.")
-        alteracoes["data_fim"] = calcular_data_fim(inicio, duracao)
+        alteracoes["data_inicio"] = proximo_dia_util(inicio)
+        alteracoes["data_fim"] = calcular_data_fim(alteracoes["data_inicio"], duracao)
     if "fase_id" in alteracoes:
         _fase_do_projeto(projeto, alteracoes["fase_id"])  # só move dentro do mesmo projeto
     if "responsavel_id" in alteracoes:

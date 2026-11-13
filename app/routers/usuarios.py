@@ -38,7 +38,10 @@ def buscar_no_diretorio(
     Para o dono do projeto encontrar quem adicionar como membro.
     Só nome e e-mail de usuários ativos, no máximo 20: não é uma listagem do cadastro inteiro.
     """
-    termo = f"%{escapar_like(busca.strip())}%"
+    busca = busca.strip()
+    if len(busca) < 2:  # "  " passaria no min_length e listaria todo mundo
+        raise HTTPException(status_code=422, detail="Digite ao menos 2 letras para buscar.")
+    termo = f"%{escapar_like(busca)}%"
     query = (
         select(Usuario)
         .where(Usuario.ativo.is_(True))

@@ -163,11 +163,24 @@ export async function api<T = void>(caminho: string, opcoes?: Opcoes): Promise<T
   return (await resposta.json()) as T
 }
 
+/** `filename*` (UTF-8, com acentos) tem prioridade sobre o `filename` em ASCII (RFC 6266). */
+function nomeDoArquivo(disposicao: string): string | undefined {
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(disposicao)?.[1]
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8.trim())
+    } catch {
+      // codificação inválida: cai no nome em ASCII
+    }
+  }
+  return /filename="([^"]+)"/.exec(disposicao)?.[1]
+}
+
 /** Baixa um arquivo autenticado (ex.: exportação .xlsx) e dispara o download no navegador. */
 export async function baixarArquivo(caminho: string, nomePadrao: string): Promise<void> {
   const resposta = await executar(caminho)
   const disposicao = resposta.headers.get("Content-Disposition") ?? ""
-  const nome = /filename="([^"]+)"/.exec(disposicao)?.[1] ?? nomePadrao
+  const nome = nomeDoArquivo(disposicao) ?? nomePadrao
   const url = URL.createObjectURL(await resposta.blob())
   const link = Object.assign(document.createElement("a"), { href: url, download: nome })
   document.body.append(link)
