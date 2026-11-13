@@ -36,7 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let ativo = true
     ;(async () => {
       try {
-        if (await cliente.renovarSessao()) {
+        if ((await cliente.renovarSessao()) === "ok") {
           const eu = await cliente.api<Usuario>("/auth/me")
           if (ativo) setUsuario(eu)
         }

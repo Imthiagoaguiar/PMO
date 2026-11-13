@@ -115,7 +115,7 @@ def criar_projeto_manual(
     return _projeto_read(projeto, usuario)
 
 
-@router.post("/ia", response_model=SugestaoProjetoIA, dependencies=[Depends(limite_ia)])
+@router.post("/ia", response_model=SugestaoProjetoIA)
 def sugerir_projeto_com_ia(
     payload: ProjetoIAEntrada,
     db: Session = Depends(get_db),
@@ -126,6 +126,7 @@ def sugerir_projeto_com_ia(
     Não grava nada: o gerente revisa no front e envia `fases` para POST /projetos/manual,
     que cria tudo de uma vez e calcula as datas com os feriados.
     """
+    limite_ia.por_usuario(usuario.id)  # por pessoa: colegas no mesmo IP não dividem a cota
     try:
         sugestao = ia.sugerir_escopo(payload.texto)
     except ia.FalhaIA as exc:
@@ -145,7 +146,6 @@ def sugerir_projeto_com_ia(
     "/importar",
     response_model=ImportacaoResultado,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(limite_importacao)],
 )
 def importar_projeto(
     tarefas_fundo: BackgroundTasks,
@@ -161,6 +161,7 @@ def importar_projeto(
     Colunas obrigatórias: Fase, Descricao. Opcionais: Data Inicio, Data Fim, Responsavel, Percentual Conclusao.
     A importação é tudo-ou-nada: se qualquer linha for inválida, nada é gravado.
     """
+    limite_importacao.por_usuario(usuario.id)
     conteudo = arquivo.file.read(MAX_TAMANHO_ARQUIVO + 1)
     if len(conteudo) > MAX_TAMANHO_ARQUIVO:
         raise HTTPException(

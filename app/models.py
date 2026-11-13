@@ -165,6 +165,8 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revogado_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Preenchido só na rotação (troca normal por um token novo), não no logout/revogação.
+    substituido_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -22,35 +22,57 @@ export class ApiError extends Error {
 }
 
 let accessToken: string | null = null
-let renovacaoEmAndamento: Promise<boolean> | null = null
+let renovacaoEmAndamento: Promise<Renovacao> | null = null
 let aoExpirarSessao: (() => void) | null = null
 
 export function definirAoExpirarSessao(callback: () => void) {
   aoExpirarSessao = callback
 }
 
+/** "expirada": só um 401 de verdade. "falhou": 429, erro do servidor ou rede — a sessão pode estar viva. */
+export type Renovacao = "ok" | "expirada" | "falhou"
+
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+async function tentarRenovar(): Promise<Renovacao> {
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    let resposta: Response
+    try {
+      resposta = await fetch(`${API}/auth/refresh`, { method: "POST", credentials: "include" })
+    } catch {
+      return "falhou"
+    }
+    if (resposta.ok) {
+      accessToken = (await resposta.json()).access_token
+      return "ok"
+    }
+    if (resposta.status === 409) {
+      // Outra aba acabou de renovar: o navegador já guardou o cookie novo. Basta repetir.
+      await esperar(250 * tentativa)
+      continue
+    }
+    if (resposta.status === 401) {
+      accessToken = null
+      return "expirada"
+    }
+    return "falhou"
+  }
+  return "falhou"
+}
+
 /**
- * Uma única renovação por vez. Importante: o back ROTACIONA o refresh token e, se o mesmo
- * token for usado duas vezes, derruba todas as sessões (proteção contra roubo). Duas chamadas
- * simultâneas (ex.: React StrictMode) dividiriam o mesmo token, então compartilham a promessa.
+ * Uma renovação por vez — nesta aba E entre abas. O back ROTACIONA o refresh token e trata o
+ * reuso de um token antigo como roubo (derruba todas as sessões). Duas abas renovando juntas
+ * mandariam o mesmo cookie; a trava do navegador (Web Locks) faz a segunda esperar a primeira
+ * e já sair com o cookie novo.
  */
-export function renovarSessao(): Promise<boolean> {
+export function renovarSessao(): Promise<Renovacao> {
   if (!renovacaoEmAndamento) {
-    renovacaoEmAndamento = (async () => {
-      try {
-        const resposta = await fetch(`${API}/auth/refresh`, { method: "POST", credentials: "include" })
-        if (!resposta.ok) {
-          accessToken = null
-          return false
-        }
-        accessToken = (await resposta.json()).access_token
-        return true
-      } catch {
-        return false
-      } finally {
-        renovacaoEmAndamento = null
-      }
-    })()
+    const travas = typeof navigator !== "undefined" ? navigator.locks : undefined
+    const execucao = travas ? travas.request("pmo-renovar-sessao", tentarRenovar) : tentarRenovar()
+    renovacaoEmAndamento = execucao.finally(() => {
+      renovacaoEmAndamento = null
+    })
   }
   return renovacaoEmAndamento
 }
@@ -122,8 +144,11 @@ async function executar(caminho: string, opcoes: Opcoes = {}, repetida = false):
   }
 
   if (resposta.status === 401 && !semRenovar && !repetida) {
-    if (await renovarSessao()) return executar(caminho, opcoes, true)
-    aoExpirarSessao?.()
+    const renovacao = await renovarSessao()
+    if (renovacao === "ok") return executar(caminho, opcoes, true)
+    if (renovacao === "expirada") aoExpirarSessao?.()
+    // Falha passageira (limite, servidor, rede): NÃO desloga — a sessão pode continuar válida.
+    else throw new ApiError(0, "Não foi possível renovar sua sessão agora. Tente de novo em instantes.")
   }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null)

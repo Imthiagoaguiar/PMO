@@ -65,7 +65,10 @@ Sem a variável, a integração fica desligada. Detalhes em `.env.example`.
 - Verificação em duas etapas (TOTP, app autenticador) com 10 códigos de recuperação de uso único.
   Obrigatória para admin com login local; opcional para os demais. O segredo fica cifrado no banco
   (`CHAVE_2FA`, obrigatória em produção — não a troque depois que alguém ativar o 2FA).
-- Login: mesma resposta para qualquer falha; bloqueio por e-mail + IP e por conta; limite por IP.
+- Login: mesma resposta para qualquer falha; bloqueio por e-mail + IP, por IP (muitas contas) e por conta.
+  Logins certos não contam como falha: um escritório inteiro atrás do mesmo IP entra normalmente.
+- Limites de IA e importação são por usuário (colegas no mesmo IP não dividem a cota).
+- Várias abas abertas: a renovação de sessão é serializada entre abas e uma corrida não é confundida com roubo de token.
 - Requisições limitadas a 1 MB (upload de planilha: 5 MB), inclusive envios em partes.
 - Verifique CVEs nas dependências: `python -m pip_audit` e `cd frontend && npm audit`.
 

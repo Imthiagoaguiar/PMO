@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from app.models import PapelUsuario
+from app.rate_limit import limite_login
 from tests.conftest import SENHA
 
 ADMIN, GERENTE, MEMBRO, FORA = (
@@ -133,9 +134,10 @@ def test_auditoria_global_so_admin_e_sobrevive_a_exclusao(client, cenario):
 
 
 def test_rate_limit_no_login(client, criar_usuario):
+    """Teto de requisições de login por IP (contra sobrecarga de CPU com o Argon2)."""
     criar_usuario(MEMBRO)
-    for _ in range(10):
-        client.post("/auth/login", data={"username": "x@empresa.com.br", "password": "x"})
+    for _ in range(limite_login.max_requisicoes):
+        client.post("/auth/login", data={"username": MEMBRO, "password": SENHA})  # até logins certos contam
     r = client.post("/auth/login", data={"username": MEMBRO, "password": SENHA})
     assert r.status_code == 429
     assert int(r.headers["retry-after"]) > 0

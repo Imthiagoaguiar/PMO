@@ -25,7 +25,7 @@ from app.config import settings
 from app.database import get_db
 from app.deps import get_usuario_sessao
 from app.models import PapelUsuario, ProvedorAuth, RefreshToken, Usuario
-from app.rate_limit import falhas_login, limite_2fa, limite_login, limite_refresh
+from app.rate_limit import falhas_login, ip_de, limite_config_2fa, limite_login, limite_login_2fa, limite_refresh
 from app.schemas import (
     SENHA_MAX,
     AlterarSenha,
@@ -118,15 +118,12 @@ def _registrar_falha(db: Session, usuario: Optional[Usuario], email: str, ip: st
 
 
 def _barrado(usuario: Optional[Usuario], email: str, ip: str) -> Optional[str]:
-    if falhas_login.bloqueado(email, ip):
-        return "e-mail + IP"
+    motivo = falhas_login.motivo_bloqueio(email, ip)
+    if motivo:
+        return motivo
     if usuario and usuario.bloqueado_ate and como_utc(usuario.bloqueado_ate) > agora_utc():
         return "conta bloqueada"
     return None
-
-
-def _ip(request: Request) -> str:
-    return request.client.host if request.client else "desconhecido"
 
 
 def _concluir_login(db: Session, response: Response, usuario: Usuario, **detalhes: str) -> TokenResposta:
@@ -162,7 +159,7 @@ def login(
         raise credenciais_invalidas  # evita gastar CPU com Argon2 em entradas gigantes
 
     email = form.username.strip().lower()
-    ip = _ip(request)
+    ip = ip_de(request)
     usuario = db.scalar(select(Usuario).where(Usuario.email == email))
     motivo_barrado = _barrado(usuario, email, ip)
     senha_correta = verificar_senha(form.password, usuario.senha_hash if usuario else None)
@@ -193,7 +190,7 @@ def login(
     return _concluir_login(db, response, usuario)
 
 
-@router.post("/login/2fa", response_model=TokenResposta, dependencies=[Depends(limite_2fa)])
+@router.post("/login/2fa", response_model=TokenResposta, dependencies=[Depends(limite_login_2fa)])
 def login_segunda_etapa(
     payload: LoginDoisFatores,
     request: Request,
@@ -218,7 +215,7 @@ def login_segunda_etapa(
         raise desafio_invalido
 
     # Quem chegou aqui já provou a senha: dá para dizer claramente que está bloqueado.
-    ip = _ip(request)
+    ip = ip_de(request)
     if _barrado(usuario, usuario.email, ip):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -259,7 +256,16 @@ def renovar_sessao(
         raise sessao_invalida
 
     if registro.revogado_em is not None:
-        # Token já usado/revogado apareceu de novo: provável roubo. Derruba todas as sessões.
+        if registro.substituido_em is not None and agora_utc() - como_utc(registro.substituido_em) <= timedelta(
+            seconds=settings.janela_renovacao_paralela_segundos
+        ):
+            # Duas abas renovaram juntas com o mesmo cookie: a outra já trocou o token e o navegador
+            # já guardou o cookie novo. Não é roubo (e nenhum token sai daqui): só tentar de novo.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A sessão acabou de ser renovada em outra aba. Tente novamente.",
+            )
+        # Token já usado/revogado apareceu de novo bem depois: provável roubo. Derruba todas as sessões.
         logger.warning("Reuso de refresh token revogado (usuário %s)", registro.usuario_id)
         services.revogar_sessoes(db, registro.usuario_id)
         auditoria.registrar(
@@ -274,7 +280,9 @@ def renovar_sessao(
     if como_utc(registro.expira_em) <= agora_utc() or usuario is None or not usuario.ativo:
         raise sessao_invalida
 
-    registro.revogado_em = agora_utc()  # rotação: cada refresh token vale uma única vez
+    # Rotação: cada refresh token vale uma única vez. `substituido_em` distingue a troca normal
+    # (que abre a janela de corrida entre abas) de uma revogação por logout/troca de senha.
+    registro.revogado_em = registro.substituido_em = agora_utc()
     return _emitir_sessao(db, response, usuario)
 
 
@@ -363,13 +371,14 @@ def status_2fa(usuario: Usuario = Depends(get_usuario_sessao), db: Session = Dep
     )
 
 
-@router.post("/2fa/iniciar", response_model=ConfiguracaoDoisFatores, dependencies=[Depends(limite_2fa)])
+@router.post("/2fa/iniciar", response_model=ConfiguracaoDoisFatores)
 def iniciar_2fa(
     payload: ConfirmarSenha,
     usuario: Usuario = Depends(get_usuario_sessao),
     db: Session = Depends(get_db),
 ) -> ConfiguracaoDoisFatores:
     """Passo 1: gera o segredo (QR code). Só passa a valer depois de confirmado em /2fa/ativar."""
+    limite_config_2fa.por_usuario(usuario.id)
     _exigir_login_local(usuario)
     if usuario.totp_ativo:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A verificação em duas etapas já está ativa.")
@@ -379,7 +388,7 @@ def iniciar_2fa(
     return ConfiguracaoDoisFatores(segredo=segredo, uri=dois_fatores.uri_provisionamento(usuario, segredo))
 
 
-@router.post("/2fa/ativar", response_model=CodigosRecuperacao, dependencies=[Depends(limite_2fa)])
+@router.post("/2fa/ativar", response_model=CodigosRecuperacao)
 def ativar_2fa(
     payload: CodigoDoisFatores,
     response: Response,
@@ -391,6 +400,7 @@ def ativar_2fa(
     Devolve os códigos de recuperação (únicos e mostrados só agora) e encerra todas as sessões:
     as próximas entradas já passam pela verificação em duas etapas.
     """
+    limite_config_2fa.por_usuario(usuario.id)
     _exigir_login_local(usuario)
     if usuario.totp_ativo:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A verificação em duas etapas já está ativa.")
@@ -411,13 +421,14 @@ def ativar_2fa(
     return CodigosRecuperacao(codigos_recuperacao=codigos)
 
 
-@router.post("/2fa/codigos", response_model=CodigosRecuperacao, dependencies=[Depends(limite_2fa)])
+@router.post("/2fa/codigos", response_model=CodigosRecuperacao)
 def novos_codigos_recuperacao(
     payload: ConfirmarSenhaECodigo,
     usuario: Usuario = Depends(get_usuario_sessao),
     db: Session = Depends(get_db),
 ) -> CodigosRecuperacao:
     """Gera 10 códigos novos; os anteriores deixam de valer."""
+    limite_config_2fa.por_usuario(usuario.id)
     if not usuario.totp_ativo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A verificação em duas etapas não está ativa.")
     _conferir_senha(usuario, payload.senha)
@@ -428,12 +439,13 @@ def novos_codigos_recuperacao(
     return CodigosRecuperacao(codigos_recuperacao=codigos)
 
 
-@router.post("/2fa/desativar", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(limite_2fa)])
+@router.post("/2fa/desativar", status_code=status.HTTP_204_NO_CONTENT)
 def desativar_2fa(
     payload: ConfirmarSenhaECodigo,
     usuario: Usuario = Depends(get_usuario_sessao),
     db: Session = Depends(get_db),
 ) -> None:
+    limite_config_2fa.por_usuario(usuario.id)
     if not usuario.totp_ativo:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A verificação em duas etapas não está ativa.")
     if settings.exigir_2fa_admin and usuario.papel == PapelUsuario.ADMIN:

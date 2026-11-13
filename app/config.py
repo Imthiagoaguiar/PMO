@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     max_tentativas_login: int = 5
     max_tentativas_conta: int = 20
     bloqueio_minutos: int = 15
+    # Password spraying: falhas de login de QUALQUER conta vindas do mesmo IP, na janela de bloqueio.
+    # Alto o bastante para um escritório inteiro (NAT) errar a senha de vez em quando.
+    max_falhas_por_ip: int = 30
+    # Teto de requisições de login por IP por minuto: só contra sobrecarga (o Argon2 é caro).
+    # Logins certos contam aqui, então dimensione para o maior escritório atrás de um único IP.
+    limite_logins_por_ip_minuto: int = Field(60, ge=10)
+    # Duas abas renovando a sessão juntas mandam o mesmo refresh token: dentro desta janela o
+    # reuso é tratado como corrida entre abas (409, tente de novo), não como roubo.
+    janela_renovacao_paralela_segundos: int = Field(30, ge=0, le=120)
 
     # Consulta senhas novas na base de vazamentos do Have I Been Pwned (só os 5 primeiros
     # caracteres do hash SHA-1 saem do servidor; a senha nunca é enviada).

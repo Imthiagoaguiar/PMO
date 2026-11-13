@@ -73,7 +73,9 @@ def test_usuario_desativado_perde_acesso_na_hora(client, criar_usuario, login):
     assert client.get("/auth/me", headers=h_membro).status_code == 401
 
 
-def test_refresh_rotaciona_e_detecta_reuso(client, criar_usuario):
+def test_refresh_rotaciona_e_detecta_reuso(client, criar_usuario, monkeypatch):
+    # Sem a janela de corrida entre abas (ver test_robustez.py), todo reuso é tratado como roubo.
+    monkeypatch.setattr(settings, "janela_renovacao_paralela_segundos", 0)
     criar_usuario(MEMBRO)
     r = client.post("/auth/login", data={"username": MEMBRO, "password": SENHA})
     cookie_original = r.cookies["pmo_refresh"]
