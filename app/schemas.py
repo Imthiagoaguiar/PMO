@@ -1,9 +1,10 @@
 import math
-from datetime import date, datetime
+import re
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Any, Dict, Generic, List, Literal, Optional, TypeVar
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.models import FASES_WATERFALL, PapelProjeto, PapelUsuario, ProvedorAuth, StatusProjeto
 from app.texto import normalizar
@@ -26,13 +27,40 @@ class Pagina(BaseModel, Generic[T]):
 DATA_MINIMA, DATA_MAXIMA = date(1900, 1, 1), date(2199, 12, 31)
 
 
+_DATA_CIVIL = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _so_data_civil(v: Any) -> Any:
+    """
+    Datas do cronograma são datas CIVIS (o "dia 15" em São Paulo), sem hora e sem fuso.
+    Recusamos "2026-03-14T23:30:00-03:00", "...Z" e timestamps: para virar um dia, alguém teria de
+    escolher um fuso, e é aí que o dia 14 vira 15. O front manda o valor do <input type="date">.
+    """
+    if isinstance(v, datetime):  # (datetime é subclasse de date)
+        raise ValueError("envie só a data, no formato AAAA-MM-DD (sem hora nem fuso)")
+    if isinstance(v, date):
+        return v
+    if isinstance(v, str) and _DATA_CIVIL.fullmatch(v.strip()):
+        return v.strip()
+    raise ValueError("envie só a data, no formato AAAA-MM-DD (sem hora nem fuso)")
+
+
 def _data_no_intervalo(v: date) -> date:
     if not DATA_MINIMA <= v <= DATA_MAXIMA:
         raise ValueError(f"data fora do intervalo aceito ({DATA_MINIMA.year} a {DATA_MAXIMA.year})")
     return v
 
 
-DataProjeto = Annotated[date, AfterValidator(_data_no_intervalo)]
+DataProjeto = Annotated[date, BeforeValidator(_so_data_civil), AfterValidator(_data_no_intervalo)]
+
+
+def _em_utc(v: datetime) -> datetime:
+    # SQLite devolve sem fuso (gravamos em UTC); Postgres devolve no fuso da sessão. Saída: sempre UTC.
+    return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)
+
+
+# Instante (não data civil): sai sempre com "+00:00", para o navegador converter para a hora local.
+InstanteUTC = Annotated[datetime, AfterValidator(_em_utc)]
 
 # Formatos de data aceitos nas células de texto da planilha (CSV ou Excel com texto).
 FORMATOS_DATA = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y", "%Y-%m-%d %H:%M:%S")
@@ -176,6 +204,10 @@ class ProjetoUpdate(BaseModel):
     orcamento_aprovado: Optional[Decimal] = Field(None, ge=0, max_digits=14, decimal_places=2)
     data_inicio: Optional[DataProjeto] = None
     status: Optional[StatusProjeto] = None
+    versao: Optional[int] = Field(
+        None, ge=1,
+        description="Versão que você leu/editou. Se alguém salvou depois dela, a resposta é 409 (nada é sobrescrito).",
+    )
 
     @field_validator("nome_projeto", mode="before")
     @classmethod
@@ -229,6 +261,10 @@ class TarefaUpdate(BaseModel):
         None, ge=1, le=1000,
         description="Calcula a data_fim a partir da data_inicio, pulando fins de semana e feriados nacionais",
     )
+    versao: Optional[int] = Field(
+        None, ge=1,
+        description="Versão que você leu/editou. Se alguém salvou depois dela, a resposta é 409 (nada é sobrescrito).",
+    )
 
     @field_validator("descricao", "responsavel", mode="before")
     @classmethod
@@ -254,6 +290,7 @@ class TarefaRead(BaseModel):
     responsavel: Optional[str]
     responsavel_id: Optional[int]
     percentual_conclusao: int
+    versao: int = Field(..., description="Envie de volta no PATCH (bloqueio otimista)")
 
 
 class MinhaTarefa(TarefaRead):
@@ -281,6 +318,7 @@ class ProjetoResumo(BaseModel):
     data_inicio: Optional[date]
     status: StatusProjeto
     dono_id: int
+    versao: int = Field(..., description="Envie de volta no PATCH (bloqueio otimista)")
 
 
 class PermissoesProjeto(BaseModel):
@@ -525,8 +563,8 @@ class ComentarioRead(BaseModel):
     projeto_id: int
     tarefa_id: Optional[int]
     texto: str
-    criado_em: datetime
-    editado_em: Optional[datetime]
+    criado_em: InstanteUTC
+    editado_em: Optional[InstanteUTC]
     autor: Optional[UsuarioResumo] = Field(None, description="Nulo se o usuário foi excluído")
 
 
@@ -537,7 +575,7 @@ class AuditoriaRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    criado_em: datetime
+    criado_em: InstanteUTC
     usuario_id: Optional[int]
     acao: str
     entidade: str

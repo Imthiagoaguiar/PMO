@@ -15,7 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import auditoria
+from app import auditoria, tempo
 from app.config import settings
 from app.integracoes.feriados import calcular_data_fim, proximo_dia_util
 from app.models import (
@@ -292,7 +292,7 @@ def _formatar_erro(erro: dict) -> str:
 
 def calcular_indicadores(projeto: Projeto, hoje: Optional[date] = None) -> ProjetoIndicadores:
     """Indicadores do painel. Espera `projeto.fases[*].tarefas` já carregados."""
-    hoje = hoje or date.today()
+    hoje = hoje or tempo.hoje()
 
     def _atrasada(t: Tarefa) -> bool:
         return t.data_fim is not None and t.data_fim < hoje and t.percentual_conclusao < 100

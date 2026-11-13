@@ -7,7 +7,8 @@ import jwt
 from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import Select, func, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm import Session, selectinload
 
 from app import services
@@ -37,10 +38,40 @@ STATUS_ENCERRADOS = {StatusProjeto.CONCLUIDO, StatusProjeto.CANCELADO}
 # ---------- Persistência ----------
 
 
-def salvar(db: Session) -> None:
-    """Commit com rollback e erro genérico (o detalhe vai só para o log)."""
+ALTERADO_POR_OUTRA_PESSOA = (
+    "Este item foi alterado por outra pessoa enquanto você editava. Recarregue para ver a versão atual."
+)
+
+
+def conflito_de_versao() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ALTERADO_POR_OUTRA_PESSOA)
+
+
+def conferir_versao(objeto: Any, versao_lida: Optional[int]) -> None:
+    """O cliente diz qual versão editou; se alguém salvou depois disso, 409 (em vez de sobrescrever)."""
+    if versao_lida is not None and versao_lida != objeto.versao:
+        raise conflito_de_versao()
+
+
+def salvar(db: Session, conflito: Optional[str] = None) -> None:
+    """
+    Commit com rollback e erro genérico (o detalhe vai só para o log).
+    - StaleDataError: outra requisição gravou a mesma linha antes (bloqueio otimista) -> 409.
+    - IntegrityError com `conflito`: violação esperada de unicidade numa corrida -> 409 com essa mensagem.
+    """
     try:
         db.commit()
+    except StaleDataError:
+        db.rollback()
+        raise conflito_de_versao()
+    except IntegrityError:
+        db.rollback()
+        if conflito is None:
+            logger.exception("Falha ao gravar no banco")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro ao salvar. Tente novamente."
+            )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflito)
     except SQLAlchemyError:
         db.rollback()
         logger.exception("Falha ao gravar no banco")
@@ -133,9 +164,16 @@ def filtrar_projetos_visiveis(query: Select, usuario: Usuario) -> Select:
 
 
 def obter_projeto_visivel(
-    db: Session, projeto_id: int, usuario: Usuario, carregar_tarefas: bool = False
+    db: Session, projeto_id: int, usuario: Usuario, carregar_tarefas: bool = False,
+    carregar_membros: bool = False,
 ) -> Projeto:
-    query = select(Projeto).where(Projeto.id == projeto_id)
+    # Os membros vêm sempre (as permissões dependem deles), numa query só.
+    # `carregar_membros` traz também nome/e-mail de cada um, para as rotas de membros:
+    # sem isso seria 1 query extra POR membro (N+1).
+    membros = selectinload(Projeto.membros)
+    query = select(Projeto).where(Projeto.id == projeto_id).options(
+        membros.selectinload(ProjetoMembro.usuario) if carregar_membros else membros
+    )
     if carregar_tarefas:
         query = query.options(
             selectinload(Projeto.fases).selectinload(Fase.tarefas).selectinload(Tarefa.responsavel_usuario)
@@ -176,8 +214,10 @@ def obter_projeto_editavel(
     return projeto
 
 
-def obter_projeto_gerenciavel(db: Session, projeto_id: int, usuario: Usuario) -> Projeto:
-    projeto = obter_projeto_visivel(db, projeto_id, usuario)
+def obter_projeto_gerenciavel(
+    db: Session, projeto_id: int, usuario: Usuario, carregar_membros: bool = False
+) -> Projeto:
+    projeto = obter_projeto_visivel(db, projeto_id, usuario, carregar_membros=carregar_membros)
     if not pode_gerenciar(projeto, usuario):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

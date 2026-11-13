@@ -1,6 +1,6 @@
+import logging
 import re
 import unicodedata
-from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -10,13 +10,15 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from app import auditoria, services
+from app import auditoria, idempotencia, services
 from app.database import get_db
 from app.integracoes import ia, notificacoes
 from app.deps import (
     STATUS_ENCERRADOS,
+    conferir_versao,
     escapar_like,
     Paginacao,
     exigir_papel,
@@ -59,6 +61,8 @@ from app.schemas import (
     ProjetoUpdate,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/projetos", tags=["Projetos"])
 
 MAX_TAMANHO_ARQUIVO = 5 * 1024 * 1024  # 5 MB
@@ -88,6 +92,42 @@ def _membros(projeto: Projeto) -> List[MembroRead]:
     ]
 
 
+def _repeticao(
+    db: Session, usuario: Usuario, chave: Optional[str], rota: str, hash_corpo: str, response: Response
+) -> Optional[Projeto]:
+    """Mesma Idempotency-Key já usada: o projeto que ela criou (senão None)."""
+    projeto_id = idempotencia.projeto_ja_criado(db, usuario.id, chave, rota, hash_corpo)
+    if projeto_id is None:
+        return None
+    response.headers["Idempotent-Replayed"] = "true"
+    return obter_projeto_visivel(db, projeto_id, usuario, carregar_tarefas=True)
+
+
+def _gravar_criacao(
+    db: Session, usuario: Usuario, projeto: Projeto, chave: Optional[str], rota: str, hash_corpo: str,
+    response: Response,
+) -> Projeto:
+    """
+    Commit da criação. Se outra requisição com a MESMA chave gravou primeiro (envio simultâneo),
+    a unicidade da chave barra esta e devolvemos o projeto da outra: um projeto só.
+    """
+    if chave is not None:
+        idempotencia.registrar(db, usuario.id, chave, rota, hash_corpo, projeto.id)
+    try:
+        db.commit()
+        return projeto
+    except IntegrityError:
+        db.rollback()
+        anterior = _repeticao(db, usuario, chave, rota, hash_corpo, response)
+        if anterior is not None:
+            return anterior
+        logger.exception("Falha ao gravar a criação do projeto")
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Falha ao gravar a criação do projeto")
+    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro ao salvar. Tente novamente.")
+
+
 def _avisar_por_email(tarefas_fundo: BackgroundTasks, usuario: Usuario, projeto: Projeto) -> None:
     """Agenda o e-mail para depois da resposta (e só depois do commit: não avisa projeto que não existe)."""
     tarefas_fundo.add_task(
@@ -99,6 +139,8 @@ def _avisar_por_email(tarefas_fundo: BackgroundTasks, usuario: Usuario, projeto:
 def criar_projeto_manual(
     payload: ProjetoManualCreate,
     tarefas_fundo: BackgroundTasks,
+    response: Response,
+    chave: Optional[str] = Depends(idempotencia.chave_do_header),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(pode_criar_projeto),
 ) -> ProjetoRead:
@@ -106,7 +148,13 @@ def criar_projeto_manual(
     Modo 1: cria o projeto do zero, já com as 5 fases do Waterfall.
     Opcionalmente recebe as tarefas iniciais em `fases` (ex.: a sugestão revisada do /projetos/ia).
     Tarefas com `duracao_dias_uteis` ganham datas encadeadas a partir de `data_inicio`.
+    Com o header Idempotency-Key, repetir o envio devolve o mesmo projeto (não cria outro).
     """
+    rota, hash_corpo = "projetos.manual", idempotencia.resumo(payload.model_dump_json().encode())
+    repetido = _repeticao(db, usuario, chave, rota, hash_corpo, response)
+    if repetido is not None:
+        return _projeto_read(repetido, usuario)
+
     projeto = services.criar_projeto_com_fases(db, usuario, **payload.model_dump(exclude={"fases"}))
     total_tarefas = services.adicionar_cronograma(projeto, payload.fases, payload.data_inicio)
     db.flush()  # gera o id para a auditoria
@@ -114,9 +162,10 @@ def criar_projeto_manual(
         db, "projeto.criado", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id,
         detalhes={"modo": "manual", "nome_projeto": projeto.nome_projeto, "tarefas": total_tarefas},
     )
-    salvar(db)
-    _avisar_por_email(tarefas_fundo, usuario, projeto)
-    return _projeto_read(projeto, usuario)
+    gravado = _gravar_criacao(db, usuario, projeto, chave, rota, hash_corpo, response)
+    if gravado is projeto:  # repetição não manda o e-mail de novo
+        _avisar_por_email(tarefas_fundo, usuario, projeto)
+    return _projeto_read(gravado, usuario)
 
 
 @router.post("/ia", response_model=SugestaoProjetoIA)
@@ -153,10 +202,12 @@ def sugerir_projeto_com_ia(
 )
 def importar_projeto(
     tarefas_fundo: BackgroundTasks,
+    response: Response,
+    chave: Optional[str] = Depends(idempotencia.chave_do_header),
     arquivo: UploadFile = File(..., description="Planilha .xlsx ou .csv"),
     nome_projeto: str = Form(..., max_length=300),
     orcamento_aprovado: Optional[Decimal] = Form(None),
-    data_inicio: Optional[date] = Form(None),
+    data_inicio: Optional[str] = Form(None, description="AAAA-MM-DD"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(pode_criar_projeto),
 ) -> ImportacaoResultado:
@@ -169,7 +220,7 @@ def importar_projeto(
     # Mesmas regras da criação manual (nome aparado, orçamento com 2 casas, datas plausíveis).
     try:
         dados = ProjetoManualCreate(
-            nome_projeto=nome_projeto, orcamento_aprovado=orcamento_aprovado, data_inicio=data_inicio
+            nome_projeto=nome_projeto, orcamento_aprovado=orcamento_aprovado, data_inicio=data_inicio or None
         )
     except ValidationError as exc:
         raise RequestValidationError(exc.errors(include_url=False, include_context=False))
@@ -179,6 +230,17 @@ def importar_projeto(
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Arquivo maior que 5 MB.",
+        )
+
+    rota = "projetos.importar"
+    hash_corpo = idempotencia.resumo(
+        conteudo, (arquivo.filename or "").encode(), dados.model_dump_json(exclude={"fases"}).encode()
+    )
+    repetido = _repeticao(db, usuario, chave, rota, hash_corpo, response)
+    if repetido is not None:
+        return ImportacaoResultado(
+            projeto=_projeto_read(repetido, usuario),
+            total_tarefas_importadas=sum(len(f.tarefas) for f in repetido.fases),
         )
 
     # Lê e valida tudo ANTES de tocar no banco.
@@ -200,12 +262,13 @@ def importar_projeto(
         db, "projeto.importado", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id,
         detalhes={"arquivo": (arquivo.filename or "")[:200], "tarefas": len(tarefas)},
     )
-    salvar(db)
-    _avisar_por_email(tarefas_fundo, usuario, projeto)
+    gravado = _gravar_criacao(db, usuario, projeto, chave, rota, hash_corpo, response)
+    if gravado is projeto:
+        _avisar_por_email(tarefas_fundo, usuario, projeto)
 
     return ImportacaoResultado(
-        projeto=_projeto_read(projeto, usuario),
-        total_tarefas_importadas=len(tarefas),
+        projeto=_projeto_read(gravado, usuario),
+        total_tarefas_importadas=sum(len(f.tarefas) for f in gravado.fases),
     )
 
 
@@ -301,6 +364,7 @@ def atualizar_projeto(
     """Dono, admin ou editor. Projeto encerrado só aceita mudança de status (para ser reaberto)."""
     projeto = obter_projeto_editavel(db, projeto_id, usuario)
     alteracoes = payload.model_dump(exclude_unset=True)
+    conferir_versao(projeto, alteracoes.pop("versao", None))
     if projeto.status in STATUS_ENCERRADOS and set(alteracoes) - {"status"}:
         exigir_projeto_aberto(projeto)
 
@@ -339,7 +403,7 @@ def listar_membros(
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> List[MembroRead]:
     """O dono vem primeiro; depois os demais por nome."""
-    return _membros(obter_projeto_visivel(db, projeto_id, usuario))
+    return _membros(obter_projeto_visivel(db, projeto_id, usuario, carregar_membros=True))
 
 
 @router.post(
@@ -354,7 +418,7 @@ def adicionar_membro(
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> List[MembroRead]:
     """Entra como visualizador, a menos que `papel` diga o contrário."""
-    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario)
+    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario, carregar_membros=True)
 
     novo = db.get(Usuario, payload.usuario_id)
     if novo is None or not novo.ativo:
@@ -367,7 +431,7 @@ def adicionar_membro(
         db, "membro.adicionado", "usuario", novo.id, usuario=usuario, projeto_id=projeto.id,
         detalhes={"email": novo.email, "papel": payload.papel},
     )
-    salvar(db)
+    salvar(db, conflito="Usuário já é membro do projeto.")  # duas requisições ao mesmo tempo
     return _membros(projeto)
 
 
@@ -380,7 +444,7 @@ def alterar_papel_membro(
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> List[MembroRead]:
     """Promove a editor ou rebaixa a visualizador (dono ou admin)."""
-    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario)
+    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario, carregar_membros=True)
     if usuario_id == projeto.dono_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="O dono do projeto sempre pode editar."
@@ -407,7 +471,7 @@ def remover_membro(
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> None:
     """Remove o membro e tira dele a responsabilidade pelas tarefas deste projeto."""
-    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario)
+    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario, carregar_membros=True)
     if usuario_id == projeto.dono_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="O dono do projeto não pode ser removido."
@@ -421,7 +485,8 @@ def remover_membro(
     db.execute(
         update(Tarefa)
         .where(Tarefa.fase_id.in_(ids_fases), Tarefa.responsavel_id == usuario_id)
-        .values(responsavel_id=None)
+        # Conta como edição: quem estava com a tarefa aberta não sobrescreve o responsável removido.
+        .values(responsavel_id=None, versao=Tarefa.versao + 1)
     )
     projeto.membros.remove(membro)
     auditoria.registrar(

@@ -44,6 +44,7 @@ Acesse por `localhost` (não `127.0.0.1`): o cookie de sessão depende de front 
 python -m pytest -q                                   # SQLite em memória (chaves estrangeiras ligadas)
 python -m pytest tests/criticos -q                    # só os cenários críticos
 TEST_DATABASE_URL=postgresql+psycopg2://... pytest -q  # Postgres descartável (as tabelas são apagadas!)
+# Os testes de concorrência (tests/criticos/test_concorrencia.py) só rodam no Postgres; no SQLite são pulados.
 ```
 
 As APIs externas são simuladas nos testes; nenhum teste acessa a rede.
@@ -56,7 +57,11 @@ tests/
 │   ├── test_importacao_resiliencia.py
 │   ├── test_apis_externas.py
 │   ├── test_autenticacao_estrita.py # inclui o inventário: toda rota nova nasce exigindo token
-│   └── test_waterfall.py            # confere as 5 fases direto no banco
+│   ├── test_waterfall.py            # confere as 5 fases direto no banco
+│   ├── test_idor.py                 # token válido, projeto alheio: 404 em toda rota, banco intacto
+│   ├── test_concorrencia.py         # 5 requisições simultâneas (Postgres): versão, idempotência, 2FA
+│   ├── test_consultas_n_mais_1.py   # nº de queries não cresce com a quantidade de dados
+│   └── test_fuso_horario.py         # datas civis sem fuso, "hoje" em São Paulo, instantes em UTC
 ├── test_bordas.py                   # casos de borda encontrados na caça a bugs
 ├── test_seguranca.py, test_contas.py, test_dois_fatores.py, test_robustez.py
 ├── test_permissoes.py, test_cronograma.py, test_operacao.py

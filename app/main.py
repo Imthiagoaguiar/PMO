@@ -34,7 +34,7 @@ app.add_middleware(
     allow_origins=settings.cors_origens,  # lista explícita; necessário para enviar o cookie
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     expose_headers=["Content-Disposition", "Retry-After"],  # o front precisa ler o nome do .xlsx exportado
 )
 

@@ -17,7 +17,7 @@ from typing import Optional, Union
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 import jwt
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app import auditoria, dois_fatores, senhas, services
@@ -229,7 +229,7 @@ def login_segunda_etapa(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Código inválido ou já usado.")
 
     if metodo == "recuperacao":
-        restantes = dois_fatores.codigos_restantes(db, usuario) - 1  # o usado ainda não foi gravado
+        restantes = dois_fatores.codigos_restantes(db, usuario)  # o usado já foi marcado (UPDATE atômico)
         auditoria.registrar(
             db, "auth.codigo_recuperacao_usado", "usuario", usuario.id, usuario=usuario,
             detalhes={"restantes": restantes},
@@ -282,7 +282,21 @@ def renovar_sessao(
 
     # Rotação: cada refresh token vale uma única vez. `substituido_em` distingue a troca normal
     # (que abre a janela de corrida entre abas) de uma revogação por logout/troca de senha.
-    registro.revogado_em = registro.substituido_em = agora_utc()
+    # UPDATE condicional (atômico): com 5 renovações simultâneas do mesmo cookie, todas passam pela
+    # checagem acima, mas só a 1ª consegue revogar o token; as outras são a "outra aba" (409).
+    agora = agora_utc()
+    trocado = db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.id == registro.id, RefreshToken.revogado_em.is_(None))
+        .values(revogado_em=agora, substituido_em=agora)
+        .execution_options(synchronize_session=False)
+    )
+    if trocado.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A sessão acabou de ser renovada em outra aba. Tente novamente.",
+        )
     return _emitir_sessao(db, response, usuario)
 
 
@@ -406,7 +420,7 @@ def ativar_2fa(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A verificação em duas etapas já está ativa.")
     if not usuario.totp_segredo_cifrado:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Comece pela leitura do QR code.")
-    if not dois_fatores.verificar_totp(usuario, payload.codigo):
+    if not dois_fatores.verificar_totp(db, usuario, payload.codigo):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Código não confere. Verifique se o relógio do celular está certo e tente o código atual.",

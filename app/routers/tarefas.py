@@ -9,18 +9,18 @@ Regras:
 - duracao_dias_uteis: a data_fim é calculada pulando fins de semana e feriados (Brasil API).
 """
 
-from datetime import date
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import auditoria
+from app import auditoria, tempo
 from app.database import get_db
 from app.integracoes.feriados import calcular_data_fim, proximo_dia_util
 from app.deps import (
     Paginacao,
+    conferir_versao,
     exigir_projeto_aberto,
     filtrar_projetos_visiveis,
     get_usuario_atual,
@@ -109,6 +109,7 @@ def atualizar_tarefa(
     tarefa = _tarefa_do_projeto(db, projeto, tarefa_id)
     exigir_projeto_aberto(projeto)
     alteracoes = payload.model_dump(exclude_unset=True)
+    conferir_versao(tarefa, alteracoes.pop("versao", None))
     duracao = alteracoes.pop("duracao_dias_uteis", None)
     if duracao is not None:
         inicio = alteracoes.get("data_inicio", tarefa.data_inicio)
@@ -178,7 +179,7 @@ def minhas_tarefas(
     )
 
     resultado = paginar(db, query, pagina, linhas=True)
-    hoje = date.today()
+    hoje = tempo.hoje()
     resultado["itens"] = [
         MinhaTarefa(
             **TarefaRead.model_validate(tarefa).model_dump(),

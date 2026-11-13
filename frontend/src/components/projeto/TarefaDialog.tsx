@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { api } from "@/lib/api"
+import { api, ehConflitoDeVersao } from "@/lib/api"
 import { useAtualizarProjeto } from "@/lib/consultas"
 import { notificarErro } from "@/lib/formato"
 import type { Fase, Membro, Tarefa } from "@/lib/tipos"
@@ -58,6 +58,8 @@ export function TarefaDialog({ projetoId, fases, membros, faseInicial, tarefa, a
       for (const campo of Object.keys(dados)) {
         if (campo !== "duracao_dias_uteis" && dados[campo] === original[campo]) delete dados[campo]
       }
+      // A versão que estava na tela: se alguém salvou depois, o back responde 409 em vez de sobrescrever.
+      dados.versao = tarefa.versao
     }
     return dados
   }
@@ -75,7 +77,13 @@ export function TarefaDialog({ projetoId, fases, membros, faseInicial, tarefa, a
       })
       aoFechar()
     },
-    onError: notificarErro,
+    onError: (erro) => {
+      notificarErro(erro)
+      if (ehConflitoDeVersao(erro)) {
+        atualizar() // traz a versão atual; a pessoa revisa e salva de novo
+        aoFechar()
+      }
+    },
   })
 
   const datasInvalidas = modoFim === "data" && !!dataInicio && !!dataFim && dataFim < dataInicio

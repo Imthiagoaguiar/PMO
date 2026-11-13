@@ -1,6 +1,8 @@
 from typing import List, Literal, Optional
 
-from pydantic import Field, model_validator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +12,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     ambiente: Literal["dev", "prod"] = "dev"
+    # Fuso de quem usa o sistema: define o que é "hoje" (tarefa atrasada). O servidor pode estar em UTC.
+    fuso_horario: str = "America/Sao_Paulo"
     database_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/pmo"
 
     # Sem valor padrão de propósito: a API não sobe sem uma chave definida.
@@ -72,6 +76,15 @@ class Settings(BaseSettings):
     resend_api_key: Optional[str] = None
     # Em teste, o Resend só entrega a partir de onboarding@resend.dev (e só para o e-mail da sua conta).
     email_remetente: str = "PMO <onboarding@resend.dev>"
+
+    @field_validator("fuso_horario")
+    @classmethod
+    def _fuso_existe(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"fuso horário desconhecido: {v!r} (use um nome IANA, ex.: America/Sao_Paulo)")
+        return v
 
     @model_validator(mode="after")
     def _validar_producao(self) -> "Settings":

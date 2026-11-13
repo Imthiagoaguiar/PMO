@@ -32,7 +32,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { api, baixarArquivo } from "@/lib/api"
+import { api, baixarArquivo, ehConflitoDeVersao } from "@/lib/api"
 import { useAtualizarProjeto, useIndicadores, useMembros, useProjeto } from "@/lib/consultas"
 import * as fmt from "@/lib/formato"
 import { STATUS_PROJETO, type Projeto, type StatusProjeto } from "@/lib/tipos"
@@ -53,14 +53,20 @@ function EditarProjeto({ projeto, aoFechar }: { projeto: Projeto; aoFechar: () =
       if (novoOrcamento === null ? projeto.orcamento_aprovado !== null : Number(novoOrcamento) !== Number(projeto.orcamento_aprovado))
         dados.orcamento_aprovado = novoOrcamento
       if ((dataInicio || null) !== projeto.data_inicio) dados.data_inicio = dataInicio || null
-      return api(`/projetos/${projeto.id}`, { method: "PATCH", json: dados })
+      return api(`/projetos/${projeto.id}`, { method: "PATCH", json: { ...dados, versao: projeto.versao } })
     },
     onSuccess: () => {
       atualizar()
       toast.success("Projeto atualizado.")
       aoFechar()
     },
-    onError: fmt.notificarErro,
+    onError: (erro) => {
+      fmt.notificarErro(erro)
+      if (ehConflitoDeVersao(erro)) {
+        atualizar()
+        aoFechar()
+      }
+    },
   })
 
   function enviar(e: FormEvent) {
@@ -125,12 +131,16 @@ export function ProjetoDetalhe() {
   const [exportando, setExportando] = useState(false)
 
   const mudarStatus = useMutation({
-    mutationFn: (status: StatusProjeto) => api(`/projetos/${id}`, { method: "PATCH", json: { status } }),
+    mutationFn: (status: StatusProjeto) =>
+      api(`/projetos/${id}`, { method: "PATCH", json: { status, versao: projeto.data?.versao } }),
     onSuccess: (_, status) => {
       atualizar()
       toast.success(ENCERRADOS.includes(status) ? `Projeto ${status.toLowerCase()}: agora somente leitura.` : `Status: ${status}.`)
     },
-    onError: fmt.notificarErro,
+    onError: (erro) => {
+      fmt.notificarErro(erro)
+      if (ehConflitoDeVersao(erro)) atualizar()
+    },
   })
 
   const excluir = useMutation({

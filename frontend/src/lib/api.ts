@@ -224,3 +224,26 @@ export async function sair(): Promise<void> {
 export function esquecerSessaoLocal() {
   accessToken = null
 }
+
+/**
+ * Idempotency-Key da criação: a MESMA chave enquanto o conteúdo enviado for o mesmo (duplo clique,
+ * nova tentativa depois de uma queda de rede, a resposta que se perdeu) e uma chave nova assim que
+ * o conteúdo muda. O back devolve o projeto já criado em vez de criar outro.
+ */
+export function criarGeradorDeChave() {
+  let atual: { assinatura: string; chave: string } | null = null
+  return {
+    para(assinatura: string): string {
+      if (!atual || atual.assinatura !== assinatura) atual = { assinatura, chave: crypto.randomUUID() }
+      return atual.chave
+    },
+    renovar() {
+      atual = null
+    },
+  }
+}
+
+/** 409 de bloqueio otimista: outra pessoa salvou antes (a tela precisa recarregar os dados). */
+export function ehConflitoDeVersao(erro: unknown): boolean {
+  return erro instanceof ApiError && erro.status === 409 && /alterado por outra pessoa/i.test(erro.message)
+}

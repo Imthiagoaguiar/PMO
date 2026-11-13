@@ -188,6 +188,11 @@ class Projeto(Base):
     dono_id: Mapped[int] = mapped_column(
         ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False, index=True
     )
+    # Bloqueio otimista: todo UPDATE vira "... WHERE versao = <a que eu li>" e soma 1.
+    # Duas pessoas salvando a partir da mesma versão: uma vence, a outra recebe 409.
+    versao: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+
+    __mapper_args__ = {"version_id_col": versao}
 
     dono: Mapped["Usuario"] = relationship()
     fases: Mapped[List["Fase"]] = relationship(
@@ -275,6 +280,9 @@ class Tarefa(Base):
         ForeignKey("usuarios.id", ondelete="SET NULL"), index=True
     )
     percentual_conclusao: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    versao: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")  # ver Projeto.versao
+
+    __mapper_args__ = {"version_id_col": versao}
 
     fase: Mapped["Fase"] = relationship(back_populates="tarefas")
     responsavel_usuario: Mapped[Optional["Usuario"]] = relationship()
@@ -344,3 +352,29 @@ class Auditoria(Base):
     ip: Mapped[Optional[str]] = mapped_column(String(45))  # cabe IPv6
 
     usuario: Mapped[Optional["Usuario"]] = relationship()
+
+
+class ChaveIdempotencia(Base):
+    """
+    Header Idempotency-Key das criações (projeto manual/importado): a mesma chave enviada de novo
+    (duplo clique, retentativa após queda de rede, duas abas) devolve o projeto já criado em vez de
+    criar outro. A unicidade (usuario_id, chave) no banco resolve até envios simultâneos.
+    """
+
+    __tablename__ = "chaves_idempotencia"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False
+    )
+    chave: Mapped[str] = mapped_column(String(100), nullable=False)
+    rota: Mapped[str] = mapped_column(String(50), nullable=False)
+    hash_corpo: Mapped[str] = mapped_column(String(64), nullable=False)
+    projeto_id: Mapped[int] = mapped_column(
+        ForeignKey("projetos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (UniqueConstraint("usuario_id", "chave", name="uq_idempotencia_usuario_chave"),)

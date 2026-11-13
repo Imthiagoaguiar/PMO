@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { api, ApiError } from "@/lib/api"
+import { api, ApiError, criarGeradorDeChave } from "@/lib/api"
 import { notificarErro } from "@/lib/formato"
 import { cn } from "@/lib/utils"
 import type { ImportacaoResultado, Projeto, Sugestao } from "@/lib/tipos"
@@ -159,8 +159,11 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
   const [errosPlanilha, setErrosPlanilha] = useState<string[]>([])
   const [texto, setTexto] = useState("")
   const [sugestao, setSugestao] = useState<{ fases: FaseEditavel[]; descartadas: number } | null>(null)
+  // Mesma Idempotency-Key para o mesmo conteúdo: duplo clique ou nova tentativa não duplica o projeto.
+  const [chaves] = useState(criarGeradorDeChave)
 
   function fechar() {
+    chaves.renovar()
     setDados(VAZIO)
     setArquivo(null)
     setErrosPlanilha([])
@@ -178,19 +181,19 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
   }
 
   const criarManual = useMutation({
-    mutationFn: (fases?: FaseEditavel[]) =>
-      api<Projeto>("/projetos/manual", {
-        method: "POST",
-        json: {
-          ...corpoBasico(dados),
-          fases: (fases ?? []).map((f) => ({
-            fase: f.fase,
-            tarefas: f.tarefas
-              .filter((t) => t.descricao.trim())
-              .map((t) => ({ descricao: t.descricao.trim(), duracao_dias_uteis: t.duracao ? Number(t.duracao) : null })),
-          })),
-        },
-      }),
+    mutationFn: (fases?: FaseEditavel[]) => {
+      const corpo = {
+        ...corpoBasico(dados),
+        fases: (fases ?? []).map((f) => ({
+          fase: f.fase,
+          tarefas: f.tarefas
+            .filter((t) => t.descricao.trim())
+            .map((t) => ({ descricao: t.descricao.trim(), duracao_dias_uteis: t.duracao ? Number(t.duracao) : null })),
+        })),
+      }
+      const chave = chaves.para("manual:" + JSON.stringify(corpo))
+      return api<Projeto>("/projetos/manual", { method: "POST", json: corpo, headers: { "Idempotency-Key": chave } })
+    },
     onSuccess: (p) => concluir(p, "Projeto criado com as 5 fases do Waterfall."),
     onError: notificarErro,
   })
@@ -203,7 +206,11 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
       form.append("nome_projeto", basico.nome_projeto)
       if (basico.orcamento_aprovado) form.append("orcamento_aprovado", basico.orcamento_aprovado)
       if (basico.data_inicio) form.append("data_inicio", basico.data_inicio)
-      return api<ImportacaoResultado>("/projetos/importar", { method: "POST", form })
+      const planilha = arquivo as File
+      const chave = chaves.para(
+        "importar:" + JSON.stringify([basico, planilha.name, planilha.size, planilha.lastModified]),
+      )
+      return api<ImportacaoResultado>("/projetos/importar", { method: "POST", form, headers: { "Idempotency-Key": chave } })
     },
     onSuccess: (r) => concluir(r.projeto, `Projeto importado com ${r.total_tarefas_importadas} tarefas.`),
     onError: (erro) => {

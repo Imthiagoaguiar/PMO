@@ -46,6 +46,8 @@ export interface Tarefa {
   responsavel: string | null
   responsavel_id: number | null
   percentual_conclusao: number
+  /** Bloqueio otimista: enviar de volta no PATCH (409 se outra pessoa salvou antes). */
+  versao: number
 }
 
 export interface MinhaTarefa extends Tarefa {
@@ -69,6 +71,8 @@ export interface ProjetoResumo {
   data_inicio: string | null
   status: StatusProjeto
   dono_id: number
+  /** Bloqueio otimista: enviar de volta no PATCH (409 se outra pessoa salvou antes). */
+  versao: number
 }
 
 export interface Permissoes {
