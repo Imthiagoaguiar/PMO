@@ -8,7 +8,10 @@ os.environ["SECRET_KEY"] = "chave-de-teste-" + "x" * 40
 os.environ["COOKIE_SECURE"] = "false"  # o TestClient usa http://
 os.environ["AMBIENTE"] = "dev"
 os.environ["VERIFICAR_SENHAS_VAZADAS"] = "false"  # nenhum teste acessa a internet
-os.environ["EXIGIR_2FA_ADMIN"] = "false"  # ligado só nos testes de 2FA (test_dois_fatores.py)
+os.environ["EXIGIR_2FA_ADMIN"] = "false"
+os.environ["LOG_ARQUIVO"] = ""  # os testes não escrevem em logs/pmo.log
+os.environ["LOG_ARQUIVO_TRABALHADOR"] = ""
+os.environ["FILA_SINCRONA"] = "true"  # importação roda na hora (fakeredis): sem Redis nem worker  # ligado só nos testes de 2FA (test_dois_fatores.py)
 
 from typing import Callable, Dict  # noqa: E402
 
@@ -61,3 +64,34 @@ def login(client) -> Callable[[str], Dict[str, str]]:
         return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
     return _login
+
+
+class _RespostaImportacao:
+    """Resposta no formato antigo (síncrono) de POST /projetos/importar, para os testes de PLANILHA."""
+
+    def __init__(self, status_code: int, corpo: dict, headers) -> None:
+        self.status_code, self._corpo, self.headers = status_code, corpo, headers
+        self.text = str(corpo)
+
+    def json(self) -> dict:
+        return self._corpo
+
+
+def postar_importacao(client, url: str, **kwargs):
+    """
+    POST /projetos/importar agora responde 202 e processa na fila (síncrona nos testes: o job já
+    terminou quando a resposta chega). Converte para o formato antigo: 201 + projeto, ou 422 + erros.
+    Os testes da FILA em si (202, andamento, falhas) estão em tests/test_importacao_fila.py.
+    """
+    r = client.post(url, **kwargs)
+    if r.status_code != 202:
+        return r
+    imp = r.json()
+    if imp["status"] == "concluida":
+        projeto = client.get(f"/projetos/{imp['projeto_id']}", headers=kwargs.get("headers")).json()
+        return _RespostaImportacao(201, {"projeto": projeto, "total_tarefas_importadas": imp["total_linhas"],
+                                         "importacao": imp}, r.headers)
+    if imp["status"] == "falhou":
+        return _RespostaImportacao(422, {"detail": {"mensagem": imp["mensagem"], "erros": imp["erros"]},
+                                         "importacao": imp}, r.headers)
+    return r

@@ -88,6 +88,23 @@ class DadosRelatorio:
     gerado_por: str
     agora_utc: datetime
     hoje: date
+    linha_do_tempo: List[Any]  # [(tarefa, índice da fase)], as primeiras por data de início
+    total_com_datas: int
+
+
+def tarefas_da_linha_do_tempo(db: Any, projeto: Projeto) -> dict:
+    """Só as tarefas que cabem no Gantt (e quantas têm datas), sem carregar o cronograma inteiro."""
+    from sqlalchemy import func, select
+
+    from app.models import Fase, Tarefa
+
+    com_datas = (Fase.projeto_id == projeto.id, Tarefa.data_inicio.is_not(None), Tarefa.data_fim.is_not(None))
+    total = db.scalar(select(func.count()).select_from(Tarefa).join(Fase).where(*com_datas)) or 0
+    linhas = db.execute(
+        select(Tarefa, Fase.ordem_sequencia).join(Fase).where(*com_datas)
+        .order_by(Tarefa.data_inicio, Fase.ordem_sequencia, Tarefa.id).limit(MAX_TAREFAS_LINHA_DO_TEMPO)
+    ).all()
+    return {"linha_do_tempo": [(t, ordem - 1) for t, ordem in linhas], "total_com_datas": total}
 
 
 # ---------- Texto seguro e formatação ----------
@@ -378,16 +395,10 @@ def _grafico_financeiro(pilares: List[PilarRead]) -> Drawing:
 
 def _linha_do_tempo(d: DadosRelatorio) -> List[Any]:
     itens: List[Any] = [_secao("Linha do tempo")]
-    tarefas = [
-        (t, fase.ordem_sequencia - 1)
-        for fase in d.projeto.fases for t in fase.tarefas
-        if t.data_inicio and t.data_fim
-    ]
+    tarefas = d.linha_do_tempo
     if not tarefas:
         return itens + [_p("Nenhuma tarefa com início e término definidos.", ESTILOS["fraco"])]
-    tarefas.sort(key=lambda par: (par[0].data_inicio, par[1], par[0].id))
-    omitidas = max(len(tarefas) - MAX_TAREFAS_LINHA_DO_TEMPO, 0)
-    tarefas = tarefas[:MAX_TAREFAS_LINHA_DO_TEMPO]
+    omitidas = max(d.total_com_datas - len(tarefas), 0)
 
     inicio = min(t.data_inicio for t, _ in tarefas)
     fim = max(t.data_fim for t, _ in tarefas) + timedelta(days=1)

@@ -8,6 +8,7 @@ import { Layout } from "@/components/Layout"
 import { useAuth } from "@/lib/auth"
 import type { PapelUsuario } from "@/lib/tipos"
 import { Auditoria } from "@/pages/Auditoria"
+import { Vigia } from "@/pages/Vigia"
 import { Login } from "@/pages/Login"
 import { MinhasTarefas } from "@/pages/MinhasTarefas"
 import { ProjetoDetalhe } from "@/pages/ProjetoDetalhe"
@@ -26,6 +27,12 @@ function ComSessao({ children }: { children: ReactNode }) {
 }
 
 /** Esconde telas de outros papéis. A API recusa de qualquer forma: isto é só navegação. */
+/** A API também barra (404): isto só evita mostrar uma página vazia a quem não pode ver. */
+function SomenteVigia({ children }: { children: ReactNode }) {
+  const { usuario } = useAuth()
+  return usuario?.pode_ver_vigia ? children : <Navigate to="/projetos" replace />
+}
+
 function SomentePapel({ papeis, children }: { papeis: PapelUsuario[]; children: ReactNode }) {
   const { usuario } = useAuth()
   if (!usuario || !papeis.includes(usuario.papel)) return <Navigate to="/projetos" replace />
@@ -47,6 +54,7 @@ const router = createBrowserRouter([
       { path: "/minhas-tarefas", element: <MinhasTarefas /> },
       { path: "/usuarios", element: <SomentePapel papeis={["admin"]}><Usuarios /></SomentePapel> },
       { path: "/auditoria", element: <SomentePapel papeis={["admin"]}><Auditoria /></SomentePapel> },
+      { path: "/vigia", element: <SomenteVigia><Vigia /></SomenteVigia> },
       { path: "*", element: <Navigate to="/projetos" replace /> },
     ],
   },

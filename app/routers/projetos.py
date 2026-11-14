@@ -6,17 +6,20 @@ from typing import Any, Dict, List, Optional
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from app import auditoria, idempotencia, relatorio, services, tempo
+from app import auditoria, fila, idempotencia, relatorio, services, tempo
+from app.config import settings
+from app.routers.importacoes import ler_importacao
 from app.database import get_db
 from app.integracoes import ia, notificacoes
 from app.deps import (
+    IdPath,
     STATUS_ENCERRADOS,
     conferir_versao,
     escapar_like,
@@ -37,6 +40,8 @@ from app.models import (
     Auditoria,
     Comentario,
     Fase,
+    Importacao,
+    StatusImportacao,
     PapelUsuario,
     Projeto,
     ProjetoMembro,
@@ -52,21 +57,23 @@ from app.schemas import (
     ProjetoIAEntrada,
     SugestaoProjetoIA,
     AuditoriaRead,
-    ImportacaoResultado,
+    ImportacaoRead,
     MembroAdicionar,
     Pagina,
     ProjetoIndicadores,
     ProjetoManualCreate,
+    FaseRead,
+    PilarResumo,
     ProjetoRead,
     ProjetoResumo,
     ProjetoUpdate,
+    TarefaRead,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projetos", tags=["Projetos"])
 
-MAX_TAMANHO_ARQUIVO = 5 * 1024 * 1024  # 5 MB
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 pode_criar_projeto = exigir_papel(PapelUsuario.ADMIN, PapelUsuario.GERENTE)
@@ -75,12 +82,22 @@ pode_criar_projeto = exigir_papel(PapelUsuario.ADMIN, PapelUsuario.GERENTE)
 # ---------- Criação ----------
 
 
-def _projeto_read(projeto: Projeto, usuario: Usuario) -> ProjetoRead:
-    leitura = ProjetoRead.model_validate(projeto)
-    leitura.permissoes = PermissoesProjeto(
-        editar=pode_editar(projeto, usuario), gerenciar=pode_gerenciar(projeto, usuario)
+def _projeto_read(db: Session, projeto: Projeto, usuario: Usuario) -> ProjetoRead:
+    """
+    Detalhe do projeto com as primeiras 200 tarefas de cada fase (+ o total). Projeto de 100 mil
+    tarefas não vira um JSON de 23 MB: o resto é paginado em GET /projetos/{id}/tarefas.
+    """
+    por_fase = services.tarefas_por_fase(db, projeto)
+    return ProjetoRead(
+        **ProjetoResumo.model_validate(projeto).model_dump(),
+        fases=[
+            FaseRead(id=f.id, titulo=f.titulo, ordem_sequencia=f.ordem_sequencia,
+                     tarefas=[TarefaRead.model_validate(t) for t in por_fase[f.id][1]], total_tarefas=por_fase[f.id][0])
+            for f in projeto.fases
+        ],
+        pilares=[PilarResumo.model_validate(pi) for pi in projeto.pilares],
+        permissoes=PermissoesProjeto(editar=pode_editar(projeto, usuario), gerenciar=pode_gerenciar(projeto, usuario)),
     )
-    return leitura
 
 
 def _membros(projeto: Projeto) -> List[MembroRead]:
@@ -101,7 +118,7 @@ def _repeticao(
     if projeto_id is None:
         return None
     response.headers["Idempotent-Replayed"] = "true"
-    return obter_projeto_visivel(db, projeto_id, usuario, carregar_tarefas=True)
+    return obter_projeto_visivel(db, projeto_id, usuario)
 
 
 def _gravar_criacao(
@@ -154,7 +171,7 @@ def criar_projeto_manual(
     rota, hash_corpo = "projetos.manual", idempotencia.resumo(payload.model_dump_json().encode())
     repetido = _repeticao(db, usuario, chave, rota, hash_corpo, response)
     if repetido is not None:
-        return _projeto_read(repetido, usuario)
+        return _projeto_read(db, repetido, usuario)
 
     projeto = services.criar_projeto_com_fases(db, usuario, **payload.model_dump(exclude={"fases"}))
     total_tarefas = services.adicionar_cronograma(projeto, payload.fases, payload.data_inicio)
@@ -166,7 +183,7 @@ def criar_projeto_manual(
     gravado = _gravar_criacao(db, usuario, projeto, chave, rota, hash_corpo, response)
     if gravado is projeto:  # repetição não manda o e-mail de novo
         _avisar_por_email(tarefas_fundo, usuario, projeto)
-    return _projeto_read(gravado, usuario)
+    return _projeto_read(db, gravado, usuario)
 
 
 @router.post("/ia", response_model=SugestaoProjetoIA)
@@ -198,11 +215,12 @@ def sugerir_projeto_com_ia(
 
 @router.post(
     "/importar",
-    response_model=ImportacaoResultado,
-    status_code=status.HTTP_201_CREATED,
+    response_model=ImportacaoRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={503: {"description": "Fila de processamento indisponível"}},
 )
 def importar_projeto(
-    tarefas_fundo: BackgroundTasks,
+    request: Request,
     response: Response,
     chave: Optional[str] = Depends(idempotencia.chave_do_header),
     arquivo: UploadFile = File(..., description="Planilha .xlsx ou .csv"),
@@ -211,14 +229,15 @@ def importar_projeto(
     data_inicio: Optional[str] = Form(None, description="AAAA-MM-DD"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(pode_criar_projeto),
-) -> ImportacaoResultado:
+) -> ImportacaoRead:
     """
-    Modo 2: cria o projeto + 5 fases e importa as tarefas da planilha.
-    Colunas obrigatórias: Fase, Descricao. Opcionais: Data Inicio, Data Fim, Responsavel, Percentual Conclusao.
-    A importação é tudo-ou-nada: se qualquer linha for inválida, nada é gravado.
+    Modo 2: envia a planilha e responde NA HORA (202) com a importação "na fila". O worker
+    (`python -m app.trabalhador`) lê, valida e grava em segundo plano; acompanhe em GET /importacoes/{id}.
+    Colunas obrigatórias: Fase, Descricao. Opcionais: Data Inicio, Data Fim, Responsavel, Percentual Conclusao, Pilar.
+    Tudo-ou-nada: com qualquer linha inválida, nada é gravado e a importação termina "falhou" com os erros.
     """
     limite_importacao.por_usuario(usuario.id)
-    # Mesmas regras da criação manual (nome aparado, orçamento com 2 casas, datas plausíveis).
+    # Validações baratas aqui (resposta imediata); o trabalho pesado (ler e validar as linhas) fica com o worker.
     try:
         dados = ProjetoManualCreate(
             nome_projeto=nome_projeto, orcamento_aprovado=orcamento_aprovado, data_inicio=data_inicio or None
@@ -226,51 +245,71 @@ def importar_projeto(
     except ValidationError as exc:
         raise RequestValidationError(exc.errors(include_url=False, include_context=False))
 
-    conteudo = arquivo.file.read(MAX_TAMANHO_ARQUIVO + 1)
-    if len(conteudo) > MAX_TAMANHO_ARQUIVO:
+    limite = settings.importacao_max_mb * 1024 * 1024
+    conteudo = arquivo.file.read(limite + 1)
+    if len(conteudo) > limite:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Arquivo maior que 5 MB.",
+            detail=f"Arquivo maior que {settings.importacao_max_mb} MB.",
         )
+    nome_arquivo = (arquivo.filename or "").replace("\x00", "")[:255]
+    if not nome_arquivo.lower().endswith((".csv", ".xlsx")):
+        raise HTTPException(status_code=422, detail={"mensagem": "Formato não suportado. Envie um arquivo .csv ou .xlsx.", "erros": []})
+    if not conteudo:
+        raise HTTPException(status_code=422, detail={"mensagem": "O arquivo está vazio.", "erros": []})
 
-    rota = "projetos.importar"
-    hash_corpo = idempotencia.resumo(
-        conteudo, (arquivo.filename or "").encode(), dados.model_dump_json(exclude={"fases"}).encode()
+    hash_corpo = idempotencia.resumo(conteudo, nome_arquivo.encode(), dados.model_dump_json(exclude={"fases"}).encode())
+    repetida = _importacao_repetida(db, usuario, chave, hash_corpo, response)
+    if repetida is not None:
+        return repetida
+
+    importacao = Importacao(
+        usuario_id=usuario.id, nome_projeto=dados.nome_projeto, orcamento_aprovado=dados.orcamento_aprovado,
+        data_inicio=dados.data_inicio, arquivo_nome=nome_arquivo, arquivo_bytes=len(conteudo), conteudo=conteudo,
+        ip=request.client.host if request.client else None, chave_idempotencia=chave, hash_corpo=hash_corpo,
+        etapa="Na fila",
     )
-    repetido = _repeticao(db, usuario, chave, rota, hash_corpo, response)
-    if repetido is not None:
-        return ImportacaoResultado(
-            projeto=_projeto_read(repetido, usuario),
-            total_tarefas_importadas=sum(len(f.tarefas) for f in repetido.fases),
-        )
-
-    # Lê e valida tudo ANTES de tocar no banco.
+    db.add(importacao)
     try:
-        df = services.ler_planilha(conteudo, arquivo.filename or "")
-        tarefas = services.validar_tarefas(df)
-    except services.PlanilhaInvalida as exc:
+        db.commit()  # gravada ANTES de enfileirar: o worker precisa encontrá-la no banco
+    except IntegrityError:  # mesma Idempotency-Key enviada ao mesmo tempo: a outra requisição venceu
+        db.rollback()
+        repetida = _importacao_repetida(db, usuario, chave, hash_corpo, response)
+        if repetida is not None:
+            return repetida
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro ao salvar. Tente novamente.")
+
+    try:
+        fila.enfileirar_importacao(importacao.id)
+    except fila.RedisError:
+        logger.exception("Fila indisponível ao enfileirar a importação %s", importacao.id)
+        importacao.status, importacao.etapa, importacao.conteudo = StatusImportacao.FALHOU, "Falhou", None
+        importacao.mensagem = "A fila de processamento está fora do ar. Tente de novo em alguns minutos."
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=importacao.mensagem)
+
+    db.refresh(importacao)  # com a fila síncrona (testes), o job já rodou
+    response.headers["Location"] = f"/importacoes/{importacao.id}"
+    return ler_importacao(importacao)
+
+
+def _importacao_repetida(
+    db: Session, usuario: Usuario, chave: Optional[str], hash_corpo: str, response: Response
+) -> Optional[ImportacaoRead]:
+    if chave is None:
+        return None
+    existente = db.scalar(select(Importacao).where(Importacao.usuario_id == usuario.id, Importacao.chave_idempotencia == chave))
+    if existente is None:
+        return None
+    if existente.hash_corpo != hash_corpo:
         raise HTTPException(
-            status_code=422,  # Unprocessable Content
-            detail={"mensagem": exc.mensagem, "erros": exc.erros},
+            status_code=422,
+            detail="Esta Idempotency-Key já foi usada em outra requisição. Gere uma chave nova para cada criação.",
         )
+    response.headers["Idempotent-Replayed"] = "true"
+    response.headers["Location"] = f"/importacoes/{existente.id}"
+    return ler_importacao(existente)
 
-    projeto = services.criar_projeto_com_fases(
-        db, usuario, dados.nome_projeto, dados.orcamento_aprovado, dados.data_inicio
-    )
-    services.adicionar_tarefas(projeto, tarefas)
-    db.flush()
-    auditoria.registrar(
-        db, "projeto.importado", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id,
-        detalhes={"arquivo": (arquivo.filename or "").replace("\x00", "")[:200], "tarefas": len(tarefas)},
-    )
-    gravado = _gravar_criacao(db, usuario, projeto, chave, rota, hash_corpo, response)
-    if gravado is projeto:
-        _avisar_por_email(tarefas_fundo, usuario, projeto)
-
-    return ImportacaoResultado(
-        projeto=_projeto_read(gravado, usuario),
-        total_tarefas_importadas=sum(len(f.tarefas) for f in gravado.fases),
-    )
 
 
 # ---------- Consulta ----------
@@ -294,22 +333,22 @@ def listar_projetos(
 
 @router.get("/{projeto_id}", response_model=ProjetoRead)
 def detalhar_projeto(
-    projeto_id: int,
+    projeto_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> ProjetoRead:
-    return _projeto_read(obter_projeto_visivel(db, projeto_id, usuario, carregar_tarefas=True), usuario)
+    return _projeto_read(db, obter_projeto_visivel(db, projeto_id, usuario), usuario)
 
 
 @router.get("/{projeto_id}/indicadores", response_model=ProjetoIndicadores)
 def indicadores_projeto(
-    projeto_id: int,
+    projeto_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> ProjetoIndicadores:
     """Progresso geral e por fase, atrasos e fase atual — base para o dashboard."""
-    projeto = obter_projeto_visivel(db, projeto_id, usuario, carregar_tarefas=True)
-    return services.calcular_indicadores(projeto)
+    projeto = obter_projeto_visivel(db, projeto_id, usuario)
+    return services.calcular_indicadores(db, projeto)
 
 
 @router.get(
@@ -318,7 +357,7 @@ def indicadores_projeto(
     responses={200: {"content": {MIME_XLSX: {}}, "description": "Planilha .xlsx do cronograma"}},
 )
 def exportar_projeto(
-    projeto_id: int,
+    projeto_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> Response:
@@ -340,7 +379,7 @@ def exportar_projeto(
     responses={200: {"content": {"application/pdf": {}}, "description": "Relatório do projeto em PDF"}},
 )
 def relatorio_pdf(
-    projeto_id: int,
+    projeto_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> Response:
@@ -349,7 +388,7 @@ def relatorio_pdf(
     histórico e comentários recentes. Qualquer membro pode gerar (inclusive visualizador).
     """
     limite_relatorio.por_usuario(usuario.id)
-    projeto = obter_projeto_visivel(db, projeto_id, usuario, carregar_tarefas=True)
+    projeto = obter_projeto_visivel(db, projeto_id, usuario)
     historico = db.scalars(
         select(Auditoria).options(selectinload(Auditoria.usuario))
         .where(Auditoria.projeto_id == projeto.id)
@@ -364,8 +403,9 @@ def relatorio_pdf(
     conteudo = relatorio.gerar_pdf(relatorio.DadosRelatorio(
         projeto=projeto,
         dono=projeto.dono.nome,
-        indicadores=services.calcular_indicadores(projeto, hoje),
-        pilares=services.calcular_pilares(projeto, services.listar_pilares(db, projeto.id), hoje),
+        indicadores=services.calcular_indicadores(db, projeto, hoje),
+        pilares=services.calcular_pilares(db, projeto, services.listar_pilares(db, projeto.id), hoje),
+        **relatorio.tarefas_da_linha_do_tempo(db, projeto),
         historico=historico,
         comentarios=comentarios,
         gerado_por=usuario.nome,
@@ -383,7 +423,7 @@ def relatorio_pdf(
 
 @router.get("/{projeto_id}/historico", response_model=Pagina[AuditoriaRead])
 def historico_projeto(
-    projeto_id: int,
+    projeto_id: IdPath,
     pagina: Paginacao = Depends(),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -404,7 +444,7 @@ def historico_projeto(
 
 @router.patch("/{projeto_id}", response_model=ProjetoResumo)
 def atualizar_projeto(
-    projeto_id: int,
+    projeto_id: IdPath,
     payload: ProjetoUpdate,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -427,7 +467,7 @@ def atualizar_projeto(
 
 @router.delete("/{projeto_id}", status_code=status.HTTP_204_NO_CONTENT)
 def excluir_projeto(
-    projeto_id: int,
+    projeto_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> None:
@@ -446,7 +486,7 @@ def excluir_projeto(
 
 @router.get("/{projeto_id}/membros", response_model=List[MembroRead])
 def listar_membros(
-    projeto_id: int,
+    projeto_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> List[MembroRead]:
@@ -460,7 +500,7 @@ def listar_membros(
     status_code=status.HTTP_201_CREATED,
 )
 def adicionar_membro(
-    projeto_id: int,
+    projeto_id: IdPath,
     payload: MembroAdicionar,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -485,8 +525,8 @@ def adicionar_membro(
 
 @router.patch("/{projeto_id}/membros/{usuario_id}", response_model=List[MembroRead])
 def alterar_papel_membro(
-    projeto_id: int,
-    usuario_id: int,
+    projeto_id: IdPath,
+    usuario_id: IdPath,
     payload: MembroAlterar,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -513,8 +553,8 @@ def alterar_papel_membro(
 
 @router.delete("/{projeto_id}/membros/{usuario_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remover_membro(
-    projeto_id: int,
-    usuario_id: int,
+    projeto_id: IdPath,
+    usuario_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> None:

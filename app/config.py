@@ -14,6 +14,24 @@ class Settings(BaseSettings):
     ambiente: Literal["dev", "prod"] = "dev"
     # Fuso de quem usa o sistema: define o que é "hoje" (tarefa atrasada). O servidor pode estar em UTC.
     fuso_horario: str = "America/Sao_Paulo"
+    # Log estruturado (JSON por linha) lido pelo vigia. Vazio = só no terminal.
+    log_arquivo: Optional[str] = "logs/pmo.log"
+
+    # Log do worker da fila (python -m app.trabalhador), também lido pelo vigia.
+    log_arquivo_trabalhador: Optional[str] = "logs/trabalhador.log"
+
+    # ---------- Fila de importação (Redis + RQ) ----------
+    redis_url: str = "redis://localhost:6379/0"
+    # true = o job roda na hora, dentro da própria requisição (testes; dispensa Redis e worker).
+    fila_sincrona: bool = False
+    importacao_max_mb: int = Field(20, ge=1, le=200)
+    importacao_max_linhas: int = Field(100_000, ge=100, le=1_000_000)
+
+    # ---------- Vigia (python -m app.vigia): procura erros e falhas a cada hora; nunca altera nada ----------
+    # Quem pode ver os relatórios: e-mails de ADMINS, em JSON. Vazio = ninguém vê pela interface.
+    vigia_emails: List[str] = []
+    vigia_intervalo_minutos: int = Field(60, ge=5, le=24 * 60)
+    vigia_api_url: str = "http://localhost:8000"  # para a sonda de saúde
     database_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/pmo"
 
     # Sem valor padrão de propósito: a API não sobe sem uma chave definida.

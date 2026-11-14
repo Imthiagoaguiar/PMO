@@ -1,10 +1,10 @@
 """Dependências e helpers compartilhados pelos routers: autenticação, autorização, paginação."""
 
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Annotated, Any, Callable, Dict, Optional
 
 import jwt
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Path, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -24,9 +24,13 @@ from app.models import (
     Tarefa,
     Usuario,
 )
-from app.security import decodificar_access_token
+from app.security import ID_MAXIMO, decodificar_access_token
 
 logger = logging.getLogger(__name__)
+
+# ID na URL: de 1 a 2^31-1 (INTEGER do Postgres). Um número maior chegava até a consulta SQL e
+# estourava o tipo do banco (erro 500); agora vira 422 antes de tocar no banco.
+IdPath = Annotated[int, Path(ge=1, le=ID_MAXIMO)]
 
 # auto_error=False: sem o header, quem responde é get_usuario_sessao (mesma mensagem em português
 # para todos os casos), e não o "Not authenticated" padrão do FastAPI.
@@ -252,7 +256,7 @@ class Paginacao:
     def __init__(
         self,
         limite: int = Query(20, ge=1, le=100, description="Itens por página"),
-        offset: int = Query(0, ge=0, description="Quantos itens pular"),
+        offset: int = Query(0, ge=0, le=1_000_000_000, description="Quantos itens pular"),
     ) -> None:
         self.limite = limite
         self.offset = offset

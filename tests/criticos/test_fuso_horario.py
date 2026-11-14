@@ -19,6 +19,7 @@ import pytest
 from app import tempo
 from app.models import Tarefa
 from tests.criticos.conftest import contar  # noqa: F401  (mantém o padrão dos outros arquivos)
+from tests.conftest import postar_importacao
 
 UTC = timezone.utc
 
@@ -62,10 +63,10 @@ def test_api_so_aceita_data_sem_hora_nem_fuso(client, gerente, brasil_api, valor
 
 
 def test_importacao_tambem_recusa_data_de_inicio_com_hora(client, gerente):
-    r = client.post("/projetos/importar", data={"nome_projeto": "Importado", "data_inicio": "2026-03-15T01:00:00-03:00"},
+    r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Importado", "data_inicio": "2026-03-15T01:00:00-03:00"},
                     files={"arquivo": ("p.csv", "Fase;Descrição\nIniciação;TAP\n".encode())}, headers=gerente)
     assert r.status_code == 422, r.text
-    r = client.post("/projetos/importar", data={"nome_projeto": "Importado", "data_inicio": "1773532800"},
+    r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Importado", "data_inicio": "1773532800"},
                     files={"arquivo": ("p.csv", "Fase;Descrição\nIniciação;TAP\n".encode())}, headers=gerente)
     assert r.status_code == 422, r.text
 
@@ -84,7 +85,7 @@ def test_data_civil_e_gravada_e_devolvida_exatamente(client, gerente, brasil_api
 
 def test_planilha_com_data_e_hora_usa_o_dia_escrito(client, gerente):
     """Excel/CSV não têm fuso: "15/03/2026 23:00" é dia 15, como a pessoa escreveu."""
-    r = client.post("/projetos/importar", data={"nome_projeto": "Importado"}, headers=gerente, files={
+    r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Importado"}, headers=gerente, files={
         "arquivo": ("p.csv", "Fase;Descrição;Data Fim\nIniciação;TAP;2026-03-15 23:59:59\n".encode())})
     assert r.status_code == 201, r.text
     assert r.json()["projeto"]["fases"][0]["tarefas"][0]["data_fim"] == "2026-03-15"

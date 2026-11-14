@@ -6,12 +6,12 @@ import zipfile
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 import openpyxl
 import pandas as pd
 from pydantic import ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import and_, case, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -23,7 +23,6 @@ from app.models import (
     MAX_PILARES,
     PILARES_PADRAO,
     Fase,
-    FarolPilar,
     Pilar,
     PapelProjeto,
     PapelUsuario,
@@ -44,9 +43,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_LINHAS = 5_000
+# A planilha é processada pelo worker da fila (app/importacao.py), não dentro da requisição.
+MAX_LINHAS = settings.importacao_max_linhas
+LOTE_DE_INSERCAO = 2_000
 # .xlsx é um ZIP: um arquivo pequeno pode "explodir" ao descompactar (zip bomb).
-MAX_XLSX_DESCOMPACTADO = 50 * 1024 * 1024  # 50 MB
+MAX_XLSX_DESCOMPACTADO = 400 * 1024 * 1024  # 100 mil linhas cabem com folga
 
 # Cabeçalhos aceitos na planilha (já normalizados) -> campo interno.
 ALIASES_COLUNAS: Dict[str, str] = {
@@ -189,7 +190,7 @@ def ler_planilha(conteudo: bytes, nome_arquivo: str) -> pd.DataFrame:
     if df.empty:
         raise PlanilhaInvalida("A planilha não contém tarefas.")
     if len(df) > MAX_LINHAS:
-        raise PlanilhaInvalida(f"A planilha excede o limite de {MAX_LINHAS} linhas.")
+        raise PlanilhaInvalida(f"A planilha excede o limite de {MAX_LINHAS:,} linhas.".replace(",", "."))
 
     # NaN/NaT -> None, para o Pydantic tratar células vazias como ausentes.
     return df.astype(object).where(pd.notna(df), None)
@@ -292,19 +293,37 @@ def validar_tarefas(df: pd.DataFrame) -> List[Tuple[int, TarefaPlanilha]]:
     return validas
 
 
-def adicionar_tarefas(projeto: Projeto, tarefas: List[Tuple[int, TarefaPlanilha]]) -> None:
-    """Coluna Pilar: "ti" casa com "TI"; um nome que o projeto não tem vira um pilar novo."""
-    fases_por_ordem = {f.ordem_sequencia: f for f in projeto.fases}
+def gravar_tarefas_em_lote(
+    db: Session, projeto: Projeto, tarefas: List[Tuple[int, TarefaPlanilha]],
+    ao_progredir: Optional[Callable[[int, int], None]] = None,
+) -> None:
+    """
+    Grava as tarefas da planilha com INSERT em lote (milhares por comando), em vez de um objeto do ORM
+    por linha: 100 mil linhas cabem em segundos. Espera o projeto já com id (flush).
+    Coluna Pilar: "ti" casa com "TI"; um nome que o projeto não tem vira um pilar novo.
+    """
+    fases_por_ordem = {f.ordem_sequencia: f.id for f in projeto.fases}
     pilares = {chave_do_pilar(p.nome): p for p in projeto.pilares}
-    for ordem, dados in tarefas:
-        tarefa = Tarefa(**dados.model_dump(exclude={"fase", "pilar"}))
-        if dados.pilar:
-            chave = chave_do_pilar(dados.pilar)
-            if chave not in pilares:
-                pilares[chave] = Pilar(nome=" ".join(dados.pilar.split())[:60], ordem=len(pilares))
-                projeto.pilares.append(pilares[chave])
-            tarefa.pilar = pilares[chave]
-        fases_por_ordem[ordem].tarefas.append(tarefa)
+    for _, dados in tarefas:
+        if dados.pilar and chave_do_pilar(dados.pilar) not in pilares:
+            pilar = Pilar(nome=" ".join(dados.pilar.split())[:60], ordem=len(pilares))
+            pilares[chave_do_pilar(dados.pilar)] = pilar
+            projeto.pilares.append(pilar)
+    db.flush()  # ids dos pilares novos
+
+    linhas = [
+        {
+            **dados.model_dump(exclude={"fase", "pilar"}),
+            "fase_id": fases_por_ordem[ordem],
+            "pilar_id": pilares[chave_do_pilar(dados.pilar)].id if dados.pilar else None,
+            "versao": 1,
+        }
+        for ordem, dados in tarefas
+    ]
+    for inicio in range(0, len(linhas), LOTE_DE_INSERCAO):
+        db.execute(insert(Tarefa), linhas[inicio: inicio + LOTE_DE_INSERCAO])
+        if ao_progredir:
+            ao_progredir(min(inicio + LOTE_DE_INSERCAO, len(linhas)), len(linhas))
 
 
 def _formatar_erro(erro: dict) -> str:
@@ -316,41 +335,57 @@ def _formatar_erro(erro: dict) -> str:
 # ---------- Indicadores ----------
 
 
-def calcular_indicadores(projeto: Projeto, hoje: Optional[date] = None) -> ProjetoIndicadores:
-    """Indicadores do painel. Espera `projeto.fases[*].tarefas` já carregados."""
+def _agregados(db: Session, agrupar_por: Any, filtro: Any, hoje: date) -> Dict[Any, Dict[str, Any]]:
+    """Contas por grupo direto no SQL: não carrega as tarefas (100 mil tarefas = 1 query, não 100 mil objetos)."""
+    atrasada = case((and_(Tarefa.data_fim < hoje, Tarefa.percentual_conclusao < 100), 1), else_=0)
+    linhas = db.execute(
+        select(
+            agrupar_por,
+            func.count(Tarefa.id),
+            func.coalesce(func.sum(case((Tarefa.percentual_conclusao == 100, 1), else_=0)), 0),
+            func.coalesce(func.sum(atrasada), 0),
+            func.coalesce(func.sum(Tarefa.percentual_conclusao), 0),
+            func.min(Tarefa.data_inicio),
+            func.max(Tarefa.data_fim),
+        ).join(Fase, Fase.id == Tarefa.fase_id).where(filtro).group_by(agrupar_por)
+    ).all()
+    return {
+        chave: {"total": int(total), "concluidas": int(concl), "atrasadas": int(atras), "soma": int(soma),
+                "inicio": ini_, "fim": fim_}
+        for chave, total, concl, atras, soma, ini_, fim_ in linhas
+    }
+
+
+def _media(soma: int, total: int) -> float:
+    return round(soma / total, 1) if total else 0.0
+
+
+def calcular_indicadores(db: Session, projeto: Projeto, hoje: Optional[date] = None) -> ProjetoIndicadores:
+    """Indicadores do painel, calculados no banco (servem para projetos de 100 mil tarefas)."""
     hoje = hoje or tempo.hoje()
-
-    def _atrasada(t: Tarefa) -> bool:
-        return t.data_fim is not None and t.data_fim < hoje and t.percentual_conclusao < 100
-
-    def _media(tarefas: List[Tarefa]) -> float:
-        return round(sum(t.percentual_conclusao for t in tarefas) / len(tarefas), 1) if tarefas else 0.0
-
-    fases = [
-        FaseIndicadores(
-            fase_id=f.id,
-            titulo=f.titulo,
-            ordem_sequencia=f.ordem_sequencia,
-            total_tarefas=len(f.tarefas),
-            tarefas_concluidas=sum(t.percentual_conclusao == 100 for t in f.tarefas),
-            tarefas_atrasadas=sum(_atrasada(t) for t in f.tarefas),
-            percentual_conclusao=_media(f.tarefas),
-        )
-        for f in projeto.fases
-    ]
-    todas = [t for f in projeto.fases for t in f.tarefas]
-    inicios = [t.data_inicio for t in todas if t.data_inicio]
-    fins = [t.data_fim for t in todas if t.data_fim]
+    por_fase = _agregados(db, Tarefa.fase_id, Fase.projeto_id == projeto.id, hoje)
+    vazio = {"total": 0, "concluidas": 0, "atrasadas": 0, "soma": 0, "inicio": None, "fim": None}
+    fases = []
+    for f in projeto.fases:
+        a = por_fase.get(f.id, vazio)
+        fases.append(FaseIndicadores(
+            fase_id=f.id, titulo=f.titulo, ordem_sequencia=f.ordem_sequencia, total_tarefas=a["total"],
+            tarefas_concluidas=a["concluidas"], tarefas_atrasadas=a["atrasadas"],
+            percentual_conclusao=_media(a["soma"], a["total"]),
+        ))
+    total = sum(a["total"] for a in por_fase.values())
+    inicios = [a["inicio"] for a in por_fase.values() if a["inicio"]]
+    fins = [a["fim"] for a in por_fase.values() if a["fim"]]
     # Waterfall: a fase atual é a primeira (na ordem) que ainda tem trabalho pendente.
     fase_atual = next(
-        (f.titulo for f in projeto.fases if any(t.percentual_conclusao < 100 for t in f.tarefas)),
+        (f.titulo for f in projeto.fases
+         if (a := por_fase.get(f.id)) and a["concluidas"] < a["total"]),
         None,
     )
-
     return ProjetoIndicadores(
         projeto_id=projeto.id,
-        percentual_conclusao=_media(todas),
-        total_tarefas=len(todas),
+        percentual_conclusao=_media(sum(a["soma"] for a in por_fase.values()), total),
+        total_tarefas=total,
         tarefas_concluidas=sum(f.tarefas_concluidas for f in fases),
         tarefas_atrasadas=sum(f.tarefas_atrasadas for f in fases),
         data_inicio_prevista=min(inicios) if inicios else None,
@@ -369,18 +404,14 @@ def listar_pilares(db: Session, projeto_id: int) -> List[Pilar]:
     ))
 
 
-def calcular_pilares(projeto: Projeto, pilares: List[Pilar], hoje: Optional[date] = None) -> List[PilarRead]:
-    """Andamento de cada pilar pelas tarefas dele + farol e financeiro. Espera as tarefas carregadas."""
+def calcular_pilares(db: Session, projeto: Projeto, pilares: List[Pilar], hoje: Optional[date] = None) -> List[PilarRead]:
+    """Andamento de cada pilar pelas tarefas dele (contas no banco) + farol e financeiro."""
     hoje = hoje or tempo.hoje()
-    tarefas_por_pilar: Dict[int, List[Tarefa]] = {}
-    for fase in projeto.fases:
-        for t in fase.tarefas:
-            if t.pilar_id is not None:
-                tarefas_por_pilar.setdefault(t.pilar_id, []).append(t)
-
+    por_pilar = _agregados(db, Tarefa.pilar_id, and_(Fase.projeto_id == projeto.id, Tarefa.pilar_id.is_not(None)), hoje)
+    vazio = {"total": 0, "concluidas": 0, "atrasadas": 0, "soma": 0}
     resultado = []
     for p in pilares:
-        tarefas = tarefas_por_pilar.get(p.id, [])
+        a = por_pilar.get(p.id, vazio)
         orcado, realizado = p.valor_orcado, p.valor_realizado
         resultado.append(PilarRead(
             id=p.id, nome=p.nome, ordem=p.ordem, farol=p.farol, status_texto=p.status_texto,
@@ -391,17 +422,34 @@ def calcular_pilares(projeto: Projeto, pilares: List[Pilar], hoje: Optional[date
             execucao_financeira=(
                 round(float(realizado) / float(orcado) * 100, 1) if orcado and realizado is not None else None
             ),
-            total_tarefas=len(tarefas),
-            tarefas_concluidas=sum(t.percentual_conclusao == 100 for t in tarefas),
-            tarefas_atrasadas=sum(
-                bool(t.data_fim and t.data_fim < hoje and t.percentual_conclusao < 100) for t in tarefas
-            ),
-            percentual_conclusao=(
-                round(sum(t.percentual_conclusao for t in tarefas) / len(tarefas), 1) if tarefas else 0.0
-            ),
+            total_tarefas=a["total"], tarefas_concluidas=a["concluidas"], tarefas_atrasadas=a["atrasadas"],
+            percentual_conclusao=_media(a["soma"], a["total"]),
             versao=p.versao,
         ))
     return resultado
+
+
+LIMITE_TAREFAS_POR_FASE = 200  # no detalhe do projeto; o resto vem por GET /projetos/{id}/tarefas
+
+
+def tarefas_por_fase(db: Session, projeto: Projeto, limite: int = LIMITE_TAREFAS_POR_FASE) -> Dict[int, Tuple[int, List[Tarefa]]]:
+    """
+    {fase_id: (total, primeiras `limite` tarefas)} em 2 queries fixas, qualquer que seja o tamanho:
+    a contagem por fase e as primeiras de cada fase (ROW_NUMBER() OVER (PARTITION BY fase)).
+    """
+    totais = dict(db.execute(
+        select(Tarefa.fase_id, func.count()).join(Fase).where(Fase.projeto_id == projeto.id).group_by(Tarefa.fase_id)
+    ).all())
+    numeradas = (
+        select(Tarefa.id, func.row_number().over(partition_by=Tarefa.fase_id, order_by=Tarefa.id).label("posicao"))
+        .join(Fase).where(Fase.projeto_id == projeto.id).subquery()
+    )
+    primeiras: Dict[int, List[Tarefa]] = {f.id: [] for f in projeto.fases}
+    for tarefa in db.scalars(
+        select(Tarefa).join(numeradas, numeradas.c.id == Tarefa.id).where(numeradas.c.posicao <= limite).order_by(Tarefa.id)
+    ):
+        primeiras.setdefault(tarefa.fase_id, []).append(tarefa)
+    return {f.id: (totais.get(f.id, 0), primeiras.get(f.id, [])) for f in projeto.fases}
 
 
 # ---------- Exportação ----------

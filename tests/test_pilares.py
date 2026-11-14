@@ -10,6 +10,7 @@ import pytest
 from app import tempo
 from app.integracoes import feriados
 from app.models import MAX_PILARES, PapelUsuario
+from tests.conftest import postar_importacao
 
 GERENTE, EDITORA, LEITOR = "gerente@empresa.com.br", "editora@empresa.com.br", "leitor@empresa.com.br"
 
@@ -52,7 +53,7 @@ def test_projeto_nasce_com_os_4_pilares_padrao(client, cenario):
 
 
 def test_projeto_importado_tambem_nasce_com_os_pilares(client, cenario):
-    r = client.post("/projetos/importar", data={"nome_projeto": "Importado"}, headers=cenario["h"]["gerente"],
+    r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Importado"}, headers=cenario["h"]["gerente"],
                     files={"arquivo": ("p.csv", "Fase;Descrição\nIniciação;TAP\n".encode())})
     assert [p["nome"] for p in r.json()["projeto"]["pilares"]] == ["TI", "Suprimentos", "CAPEX", "Pessoas"]
 
@@ -233,7 +234,7 @@ def test_alteracoes_ficam_no_historico(client, cenario):
 def test_importar_com_coluna_pilar(client, cenario):
     csv = ("Fase;Descrição;Pilar\nIniciação;TAP;ti\nExecução;Comprar servidores;  CAPEX \n"
            "Execução;Contrato;Jurídico\nEncerramento;Lições;\n")
-    r = client.post("/projetos/importar", data={"nome_projeto": "Com pilares"}, headers=cenario["h"]["gerente"],
+    r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Com pilares"}, headers=cenario["h"]["gerente"],
                     files={"arquivo": ("p.csv", csv.encode())})
     assert r.status_code == 201, r.text
     projeto = r.json()["projeto"]
@@ -245,7 +246,7 @@ def test_importar_com_coluna_pilar(client, cenario):
 
 def test_importar_com_pilares_demais(client, cenario):
     linhas = "".join(f"Iniciação;T{i};Frente {i}\n" for i in range(MAX_PILARES))
-    r = client.post("/projetos/importar", data={"nome_projeto": "Demais"}, headers=cenario["h"]["gerente"],
+    r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Demais"}, headers=cenario["h"]["gerente"],
                     files={"arquivo": ("p.csv", ("Fase;Descrição;Pilar\n" + linhas).encode())})
     assert r.status_code == 422
     assert "limite" in r.json()["detail"]["mensagem"]
@@ -258,7 +259,7 @@ def test_exportar_e_reimportar_mantem_os_pilares(client, cenario):
     df = pd.read_excel(io.BytesIO(exportado))
     assert df["Pilar"].tolist()[0] == "TI" and pd.isna(df["Pilar"].tolist()[1])
 
-    r = client.post("/projetos/importar", data={"nome_projeto": "Cópia"}, headers=cenario["h"]["gerente"],
+    r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Cópia"}, headers=cenario["h"]["gerente"],
                     files={"arquivo": ("copia.xlsx", exportado)})
     projeto = r.json()["projeto"]
     nomes = {p["id"]: p["nome"] for p in projeto["pilares"]}

@@ -10,6 +10,7 @@ import pytest
 
 from app.integracoes import feriados
 from app.models import PapelUsuario
+from tests.conftest import postar_importacao
 
 GERENTE, MEMBRO, ADMIN = "gerente@empresa.com.br", "membro@empresa.com.br", "admin@empresa.com.br"
 
@@ -35,7 +36,7 @@ def _projeto(client, h, **extra):
 
 
 def _importar(client, h, conteudo: bytes, nome_arquivo="plano.csv", **form):
-    return client.post(
+    return postar_importacao(client,
         "/projetos/importar", data={"nome_projeto": "Importado", **form},
         files={"arquivo": (nome_arquivo, conteudo)}, headers=h["gerente"],
     )

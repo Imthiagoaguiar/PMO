@@ -41,5 +41,5 @@ export function notificarErro(erro: unknown) {
 }
 
 export function pluralizar(n: number, singular: string, plural: string) {
-  return `${n} ${n === 1 ? singular : plural}`
+  return `${n.toLocaleString("pt-BR")} ${n === 1 ? singular : plural}` // "20.000 tarefas", não "20000"
 }

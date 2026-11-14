@@ -15,6 +15,7 @@ from app.config import settings
 from app.integracoes import clerk, feriados, ia
 from app.models import PapelUsuario
 from app.security import agora_utc
+from tests.conftest import postar_importacao
 
 GERENTE, MEMBRO = "gerente@empresa.com.br", "membro@empresa.com.br"
 EMISSOR_CLERK = "https://teste.clerk.accounts.dev"
@@ -195,7 +196,7 @@ def test_criar_projeto_envia_email_ao_dono(client, criar_usuario, login, emails)
 def test_importar_projeto_tambem_envia_email(client, criar_usuario, login, emails):
     criar_usuario(GERENTE, PapelUsuario.GERENTE)
     with open("exemplos/cronograma_exemplo.csv", "rb") as f:
-        r = client.post("/projetos/importar", data={"nome_projeto": "Importado"},
+        r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Importado"},
                         files={"arquivo": ("c.csv", f.read())}, headers=login(GERENTE))
     assert r.status_code == 201
     assert "Importado" in emails[0]["subject"]

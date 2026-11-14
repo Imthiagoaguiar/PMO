@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils"
 import type { Projeto } from "@/lib/tipos"
 
 const DIA = 86_400_000
+const MAX_BARRAS = 300
 
 function emDias(iso: string) {
   const [a, m, d] = iso.split("-").map(Number)
@@ -14,12 +15,15 @@ const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "o
 
 /** Gráfico de Gantt simples: uma barra por tarefa com início e término definidos. */
 export function LinhaDoTempo({ projeto }: { projeto: Projeto }) {
-  const linhas = projeto.fases.flatMap((fase, iFase) =>
+  const todas = projeto.fases.flatMap((fase, iFase) =>
     fase.tarefas
       .filter((t) => t.data_inicio && t.data_fim)
       .map((t) => ({ tarefa: t, fase, iFase, inicio: emDias(t.data_inicio!), fim: emDias(t.data_fim!) + 1 })),
   )
+  // Uma barra por tarefa: acima de algumas centenas o gráfico fica ilegível e pesado para o navegador.
+  const linhas = todas.length > MAX_BARRAS ? [...todas].sort((a, b) => a.inicio - b.inicio).slice(0, MAX_BARRAS) : todas
   const semDatas = projeto.fases.reduce((n, f) => n + f.tarefas.filter((t) => !t.data_inicio || !t.data_fim).length, 0)
+  const parcial = linhas.length < todas.length || projeto.fases.some((f) => f.tarefas.length < f.total_tarefas)
 
   if (linhas.length === 0) {
     return (
@@ -113,6 +117,11 @@ export function LinhaDoTempo({ projeto }: { projeto: Projeto }) {
         ))}
         <span>Parte escura = % concluído.</span>
         {semDatas > 0 && <span>{semDatas} tarefa(s) sem datas não aparecem aqui.</span>}
+        {parcial && (
+          <span>
+            Projeto grande: mostrando as {linhas.length} primeiras tarefas por data de início. O cronograma completo está no Excel exportado.
+          </span>
+        )}
       </div>
     </div>
   )

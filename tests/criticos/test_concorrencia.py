@@ -26,12 +26,12 @@ import pyotp
 import pytest
 from sqlalchemy import select
 
-from app import auditoria, dois_fatores, services
+from app import auditoria, dois_fatores, idempotencia, services
 from app.config import settings
 from app.cripto import decifrar
 from app.database import engine
 from app.main import app
-from app.models import Auditoria, Fase, Pilar, PapelUsuario, Projeto, ProjetoMembro, RefreshToken, Tarefa, Usuario
+from app.models import Auditoria, Fase, Importacao, Pilar, PapelUsuario, Projeto, ProjetoMembro, RefreshToken, Tarefa, Usuario
 from app.routers import auth as rotas_auth
 from app.routers import pilares as pilares_rotas
 from tests.conftest import SENHA
@@ -108,15 +108,17 @@ def test_chaves_diferentes_criam_projetos_diferentes(gerente, db, monkeypatch):
 
 
 def test_importacao_repetida_com_a_mesma_chave(gerente, db, monkeypatch):
-    sincronizar(monkeypatch, services, "criar_projeto_com_fases")
+    """5 envios da mesma planilha com a mesma chave, juntos: UMA importação na fila e UM projeto."""
+    sincronizar(monkeypatch, idempotencia, "resumo")  # todas passam da checagem "já existe?" juntas
     cabecalhos = {**gerente, "Idempotency-Key": "importacao-1"}
     planilha = "Fase;Descrição\nIniciação;TAP\nExecução;Construir\n".encode()
     respostas = simultaneas([
         lambda c: c.post("/projetos/importar", data={"nome_projeto": "Importado"},
                          files={"arquivo": ("p.csv", planilha)}, headers=cabecalhos)
     ] * N)
-    assert _status(respostas) == [201] * N, [r.text for r in respostas]
-    assert (contar(db, Projeto), contar(db, Tarefa)) == (1, 2)
+    assert _status(respostas) == [202] * N, [r.text for r in respostas]
+    assert len({r.json()["id"] for r in respostas}) == 1
+    assert (contar(db, Importacao), contar(db, Projeto), contar(db, Tarefa)) == (1, 1, 2)
 
 
 # ---------- Edição simultânea: bloqueio otimista ----------

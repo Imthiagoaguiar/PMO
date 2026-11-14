@@ -7,6 +7,7 @@ MVP de PMO para projetos Waterfall.
 
 - Projetos com as 5 fases (Iniciação, Planejamento, Execução, Monitoramento, Encerramento), criados manualmente, por planilha (.xlsx/.csv) ou com sugestão de escopo por IA (Groq).
 - Login próprio (JWT + refresh token em cookie httpOnly) ou Clerk; papéis admin/gerente/membro e, em cada projeto, editor ou visualizador (vê, exporta e comenta).
+- Importação de planilhas de até 100 mil linhas em segundo plano (fila Redis + RQ), com progresso ao vivo.
 - Auditoria, limite de requisições, exportação para Excel, cálculo de prazos em dias úteis (Brasil API) e e-mail de projeto criado (Resend).
 - **Pilares** (TI, Suprimentos, CAPEX, Pessoas... e outros criados pelo editor): cada tarefa pode pertencer a um pilar;
   o andamento do pilar vem das tarefas, com farol (verde/amarelo/vermelho), texto de situação e orçado x realizado.
@@ -21,6 +22,7 @@ MVP de PMO para projetos Waterfall.
 | Python | 3.11 ou mais nova (o projeto usa **3.14**, ver `.python-version`) | `brew install python@3.14` |
 | Node.js | 22 LTS ou mais nova | `brew install node` |
 | PostgreSQL | 17 | `brew install postgresql@17 && brew services start postgresql@17` |
+| Redis | 7 ou mais nova (fila de importação de planilhas) | `brew install redis && brew services start redis` |
 | App autenticador | Google Authenticator, Microsoft Authenticator, 1Password… | no celular |
 
 O app autenticador é necessário porque o admin é obrigado a ativar a verificação em duas etapas no primeiro login.
@@ -74,6 +76,17 @@ python -m uvicorn app.main:app --reload
 
 A API fica em http://localhost:8000. Em `AMBIENTE=dev`, a documentação interativa fica em http://localhost:8000/docs.
 
+**Worker da fila.** A importação de planilhas responde na hora e é processada em segundo plano.
+Em **outro terminal**, deixe o worker rodando:
+
+```bash
+source .venv/bin/activate
+python -m app.trabalhador      # processa as planilhas da fila (precisa do Redis no ar)
+```
+
+Sem Redis no seu computador, ponha `FILA_SINCRONA=true` no `.env`: a planilha é processada dentro da
+própria API, sem worker. Use isso só em desenvolvimento, porque uma planilha grande volta a prender a requisição.
+
 ### 4. Front-end
 
 Em **outro terminal** (a API continua rodando no primeiro):
@@ -98,7 +111,7 @@ npm run dev
 
 ### Dia a dia
 
-Com tudo já instalado, basta abrir dois terminais:
+Com tudo já instalado (Postgres e Redis ligados pelo `brew services`), abra três terminais:
 
 ```bash
 # terminal 1 — API (na raiz do projeto)
@@ -106,12 +119,42 @@ source .venv/bin/activate
 alembic upgrade head                     # só faz algo se vier migration nova do git
 python -m uvicorn app.main:app --reload
 
-# terminal 2 — front
+# terminal 2 — worker da fila (importação de planilhas)
+source .venv/bin/activate
+python -m app.trabalhador
+
+# terminal 3 — front
 cd frontend && npm run dev
 ```
 
 Depois de um `git pull`, rode também `pip install -r requirements-dev.txt` (API) e `npm install`
 (front), caso alguma dependência tenha mudado.
+
+### Vigia (agente que procura erros e falhas)
+
+Processo separado que observa o sistema **rodando** e, a cada hora, gera um relatório. Ele só
+identifica problemas: **nunca altera código nem dados**. Num terceiro terminal:
+
+```bash
+source .venv/bin/activate
+python -m app.vigia            # fica ligado: uma rodada na partida e depois a cada 60 min
+python -m app.vigia --uma-vez  # uma rodada agora e sai (para testar)
+```
+
+- **O que ele olha:**
+  - o log da API (`logs/pmo.log`), acompanhado em tempo real com o watchdog: erros com o arquivo e a linha do código, respostas 5xx por rota, rotas lentas, picos de 429;
+  - a saúde da API e se o banco está na migration mais nova;
+  - a integridade dos dados, como projeto sem as 5 fases ou tarefa ligada a pilar de outro projeto;
+  - alarmes de segurança (reuso de token, muitas senhas erradas), admins sem 2FA e espaço em disco.
+- **IA (opcional):** com `GROQ_API_KEY` no `.env`, a Groq correlaciona os sinais e sugere a causa
+  provável e como investigar. Antes, e-mails, IPs e tokens são trocados por marcadores. Sem a chave, o
+  relatório sai só com as regras fixas.
+- **Quem vê:** só os admins com e-mail em `VIGIA_EMAILS` (no `.env`, em JSON:
+  `VIGIA_EMAILS=["voce@empresa.com.br"]`), no menu **Vigia**. Para qualquer outra pessoa a página
+  não existe.
+- **Uma instância só:** um segundo vigia no mesmo banco se recusa a subir (trava no Postgres). Se a
+  página mostrar "Ele parece parado", o processo caiu.
+- **Em produção:** rode como serviço (systemd, launchd, supervisor) ao lado da API, com o mesmo `.env`.
 
 ### Problemas comuns
 
@@ -122,6 +165,9 @@ Depois de um `git pull`, rode também `pip install -r requirements-dev.txt` (API
 | `connection refused` na porta 5432 | O Postgres não está rodando: `brew services start postgresql@17`. |
 | A API não sobe e reclama da versão do Python | O `.venv` foi criado com um Python antigo. Apague a pasta `.venv` e refaça com `python3.14`. |
 | `Address already in use` (porta 8000 ou 5173) | Ainda tem uma API ou um front rodando em outro terminal. Feche-o, ou veja quem usa a porta com `lsof -i :8000`. |
+| A página Vigia não aparece | Seu e-mail não está em `VIGIA_EMAILS` no `.env`, ou você não é admin. Reinicie a API depois de mudar o `.env`. |
+| Importação fica "Na fila" e não anda | O worker não está rodando: `python -m app.trabalhador`. A página Vigia também avisa. |
+| Importação responde 503 ("fila fora do ar") | O Redis não está rodando: `brew services start redis` (ou use `FILA_SINCRONA=true` em desenvolvimento). |
 | Faz login e volta para a tela de login | Você abriu `127.0.0.1` em vez de `localhost`, ou o `CORS_ORIGENS` do `.env` não tem o endereço do front. |
 | Erro de banco depois de um `git pull` | Chegou migration nova: rode `alembic upgrade head`. |
 | Perdi o celular do 2FA | Use um código de recuperação ("Perdi o celular" na tela de login), ou peça a outro admin para redefinir o seu 2FA em **Usuários**. |
@@ -151,9 +197,13 @@ tests/
 │   ├── test_concorrencia.py         # 5 requisições simultâneas (Postgres): versão, idempotência, 2FA
 │   ├── test_consultas_n_mais_1.py   # nº de queries não cresce com a quantidade de dados
 │   ├── test_fuso_horario.py         # datas civis sem fuso, "hoje" em São Paulo, instantes em UTC
-│   └── test_caractere_nul.py        # NUL no texto (o Postgres recusa) vira 422, não erro 500
+│   ├── test_caractere_nul.py        # NUL no texto (o Postgres recusa) vira 422, não erro 500
+│   └── test_fuzz_rotas.py           # fuzzing de todas as rotas: nenhuma entrada absurda vira 500
 ├── test_pilares.py                  # pilares: andamento, farol, financeiro, planilha, permissões
 ├── test_relatorio_pdf.py            # PDF: conteúdo, segurança da marcação, projetos grandes
+├── test_vigia.py                    # vigia: log, watchdog, regras, sondas, IA, quem vê os relatórios
+├── test_importacao_fila.py          # fila: 202 na hora, worker, progresso, falhas, 100 mil linhas
+├── test_projeto_grande.py           # projeto grande: detalhe paginado, indicadores no SQL
 ├── test_bordas.py                   # casos de borda encontrados na caça a bugs
 ├── test_seguranca.py, test_contas.py, test_dois_fatores.py, test_robustez.py
 ├── test_permissoes.py, test_cronograma.py, test_operacao.py

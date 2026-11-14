@@ -24,6 +24,7 @@ from app.database import SessionLocal
 from app.integracoes import clerk, feriados, ia
 from app.models import Fase, PapelUsuario, Projeto, Tarefa
 from app.security import agora_utc
+from tests.conftest import postar_importacao
 
 GERENTE = "gerente@empresa.com.br"
 MEMBRO = "membro@empresa.com.br"
@@ -177,7 +178,7 @@ def importar(client, gerente) -> Callable[..., httpx.Response]:
     def _importar(conteudo: bytes, nome_arquivo: str = "plano.csv", tipo: Optional[str] = None,
                   **form: Any) -> httpx.Response:
         arquivo = (nome_arquivo, conteudo, tipo) if tipo else (nome_arquivo, conteudo)
-        return client.post("/projetos/importar", data={"nome_projeto": "Importado", **form},
+        return postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Importado", **form},
                            files={"arquivo": arquivo}, headers=gerente)
 
     return _importar

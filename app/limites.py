@@ -60,7 +60,8 @@ class LimiteCorpo:
 
     @staticmethod
     def _mensagem(limite: int) -> str:
-        return f"Requisição maior que o permitido ({limite // KB} KB)."
+        tamanho = f"{limite // MB} MB" if limite >= MB else f"{limite // KB} KB"  # "20 MB", não "20544 KB"
+        return f"Requisição maior que o permitido ({tamanho})."
 
     @staticmethod
     async def _responder(scope: Scope, receive: Receive, send: Send, status: int, detalhe: str) -> None:

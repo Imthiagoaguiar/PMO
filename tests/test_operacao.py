@@ -8,7 +8,7 @@ import pytest
 
 from app.models import PapelUsuario
 from app.rate_limit import limite_login
-from tests.conftest import SENHA
+from tests.conftest import SENHA, postar_importacao
 
 ADMIN, GERENTE, MEMBRO, FORA = (
     "admin@empresa.com.br",
@@ -193,7 +193,7 @@ def test_exportar_e_reimportar(client, cenario):
     assert df.loc[1, "Responsável"] == "Fornecedor X"
 
     # O arquivo exportado é aceito de volta pela importação.
-    r = client.post(
+    r = postar_importacao(client,
         "/projetos/importar", data={"nome_projeto": "Cópia do ERP"},
         files={"arquivo": ("erp.xlsx", r.content)}, headers=h["gerente"],
     )

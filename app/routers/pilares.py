@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app import auditoria, services
 from app.database import get_db
 from app.deps import (
+    IdPath,
     conferir_versao,
     exigir_projeto_aberto,
     get_usuario_atual,
@@ -51,8 +52,8 @@ def _exigir_nome_livre(db: Session, projeto: Projeto, nome: str, ignorar_id: Opt
 
 
 def _leitura(db: Session, projeto_id: int, usuario: Usuario, pilar_id: Optional[int] = None):
-    projeto = obter_projeto_visivel(db, projeto_id, usuario, carregar_tarefas=True)
-    pilares = services.calcular_pilares(projeto, services.listar_pilares(db, projeto.id))
+    projeto = obter_projeto_visivel(db, projeto_id, usuario)
+    pilares = services.calcular_pilares(db, projeto, services.listar_pilares(db, projeto.id))
     if pilar_id is None:
         return pilares
     return next(p for p in pilares if p.id == pilar_id)
@@ -60,7 +61,7 @@ def _leitura(db: Session, projeto_id: int, usuario: Usuario, pilar_id: Optional[
 
 @router.get("", response_model=List[PilarRead])
 def listar_pilares(
-    projeto_id: int,
+    projeto_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> List[PilarRead]:
@@ -70,7 +71,7 @@ def listar_pilares(
 
 @router.post("", response_model=PilarRead, status_code=status.HTTP_201_CREATED)
 def criar_pilar(
-    projeto_id: int,
+    projeto_id: IdPath,
     payload: PilarCreate,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -100,8 +101,8 @@ def criar_pilar(
 
 @router.patch("/{pilar_id}", response_model=PilarRead)
 def atualizar_pilar(
-    projeto_id: int,
-    pilar_id: int,
+    projeto_id: IdPath,
+    pilar_id: IdPath,
     payload: PilarUpdate,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -129,8 +130,8 @@ def atualizar_pilar(
 
 @router.delete("/{pilar_id}", status_code=status.HTTP_204_NO_CONTENT)
 def excluir_pilar(
-    projeto_id: int,
-    pilar_id: int,
+    projeto_id: IdPath,
+    pilar_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> None:

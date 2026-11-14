@@ -19,16 +19,19 @@ from app import auditoria, tempo
 from app.database import get_db
 from app.integracoes.feriados import calcular_data_fim, proximo_dia_util
 from app.deps import (
+    IdPath,
     Paginacao,
     conferir_versao,
     exigir_projeto_aberto,
     filtrar_projetos_visiveis,
     get_usuario_atual,
     obter_projeto_editavel,
+    obter_projeto_visivel,
     paginar,
     salvar,
 )
 from app.models import Fase, Projeto, Tarefa, Usuario
+from app.security import ID_MAXIMO
 from app.schemas import MinhaTarefa, Pagina, TarefaCreate, TarefaRead, TarefaUpdate
 
 router = APIRouter(prefix="/projetos/{projeto_id}", tags=["Tarefas"])
@@ -75,8 +78,8 @@ def _validar_pilar(projeto: Projeto, pilar_id: Optional[int]) -> None:
     "/fases/{fase_id}/tarefas", response_model=TarefaRead, status_code=status.HTTP_201_CREATED
 )
 def criar_tarefa(
-    projeto_id: int,
-    fase_id: int,
+    projeto_id: IdPath,
+    fase_id: IdPath,
     payload: TarefaCreate,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -104,10 +107,34 @@ def criar_tarefa(
     return tarefa
 
 
+@router.get("/tarefas", response_model=Pagina[TarefaRead])
+def listar_tarefas(
+    projeto_id: IdPath,
+    fase_id: Optional[int] = Query(None, ge=1, le=ID_MAXIMO),
+    pilar_id: Optional[int] = Query(None, ge=1, le=ID_MAXIMO),
+    sem_pilar: bool = Query(False, description="Só as tarefas sem pilar"),
+    # Próprio (e não o Paginacao genérico, de até 100): o cronograma carrega de 200 em 200.
+    limite: int = Query(200, ge=1, le=500, description="Tarefas por página"),
+    offset: int = Query(0, ge=0, le=1_000_000_000),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+) -> Dict[str, Any]:
+    """Cronograma paginado (projetos grandes): o detalhe do projeto traz só as 200 primeiras de cada fase."""
+    projeto = obter_projeto_visivel(db, projeto_id, usuario)
+    query = select(Tarefa).join(Fase).where(Fase.projeto_id == projeto.id).order_by(Tarefa.id)
+    if fase_id is not None:
+        query = query.where(Tarefa.fase_id == fase_id)
+    if sem_pilar:
+        query = query.where(Tarefa.pilar_id.is_(None))
+    elif pilar_id is not None:
+        query = query.where(Tarefa.pilar_id == pilar_id)
+    return paginar(db, query, Paginacao(limite=limite, offset=offset))
+
+
 @router.patch("/tarefas/{tarefa_id}", response_model=TarefaRead)
 def atualizar_tarefa(
-    projeto_id: int,
-    tarefa_id: int,
+    projeto_id: IdPath,
+    tarefa_id: IdPath,
     payload: TarefaUpdate,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -152,8 +179,8 @@ def atualizar_tarefa(
 
 @router.delete("/tarefas/{tarefa_id}", status_code=status.HTTP_204_NO_CONTENT)
 def excluir_tarefa(
-    projeto_id: int,
-    tarefa_id: int,
+    projeto_id: IdPath,
+    tarefa_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> None:

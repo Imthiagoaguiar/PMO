@@ -29,6 +29,8 @@ export interface Usuario extends UsuarioResumo {
   trocar_senha: boolean
   dois_fatores_ativo: boolean
   exige_configurar_2fa: boolean
+  /** Admin listado em VIGIA_EMAILS: vê os relatórios do vigia. */
+  pode_ver_vigia: boolean
 }
 
 export interface StatusDoisFatores {
@@ -62,7 +64,9 @@ export interface Fase {
   id: number
   titulo: string
   ordem_sequencia: number
+  /** As primeiras 200; o resto vem paginado de GET /projetos/{id}/tarefas. */
   tarefas: Tarefa[]
+  total_tarefas: number
 }
 
 export interface ProjetoResumo {
@@ -175,7 +179,60 @@ export interface Sugestao {
   modelo: string
 }
 
-export interface ImportacaoResultado {
-  projeto: Projeto
-  total_tarefas_importadas: number
+export type StatusImportacao = "na_fila" | "processando" | "concluida" | "falhou"
+
+/** Importação de planilha processada em segundo plano (fila). */
+export interface Importacao {
+  id: number
+  status: StatusImportacao
+  progresso: number
+  etapa: string | null
+  nome_projeto: string
+  arquivo_nome: string
+  arquivo_bytes: number
+  total_linhas: number | null
+  projeto_id: number | null
+  mensagem: string | null
+  erros: string[]
+  criada_em: string
+  iniciada_em: string | null
+  concluida_em: string | null
+}
+
+// ---------- Vigia ----------
+
+export type GravidadeAchado = "critica" | "alta" | "media" | "baixa"
+
+export interface AchadoVigia {
+  codigo: string | null
+  titulo: string
+  gravidade: GravidadeAchado
+  evidencias: string[]
+  causa_provavel: string | null
+  impacto: string | null
+  como_investigar: string[]
+  origem: "regra" | "ia"
+}
+
+export interface VigiaRodadaResumo {
+  id: number
+  iniciada_em: string
+  concluida_em: string
+  janela_inicio: string
+  pior_gravidade: GravidadeAchado | null
+  resumo: string
+  total_achados: number
+  ia_situacao: string
+}
+
+export interface VigiaRodada extends VigiaRodadaResumo {
+  achados: AchadoVigia[]
+  sinais: Record<string, unknown>
+  ia_modelo: string | null
+}
+
+export interface VigiaSituacao {
+  intervalo_minutos: number
+  ultima_rodada_em: string | null
+  atrasado: boolean
 }

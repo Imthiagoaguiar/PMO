@@ -1,6 +1,6 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { FileSpreadsheet, PenLine, Plus, Sparkles, Trash2 } from "lucide-react"
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
@@ -8,12 +8,13 @@ import { Campo, COR_FASE } from "@/components/comum"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { api, ApiError, criarGeradorDeChave } from "@/lib/api"
 import { notificarErro } from "@/lib/formato"
 import { cn } from "@/lib/utils"
-import type { ImportacaoResultado, Projeto, Sugestao } from "@/lib/tipos"
+import type { Importacao, Projeto, Sugestao } from "@/lib/tipos"
 
 interface DadosBasicos {
   nome: string
@@ -161,6 +162,14 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
   const [sugestao, setSugestao] = useState<{ fases: FaseEditavel[]; descartadas: number } | null>(null)
   // Mesma Idempotency-Key para o mesmo conteúdo: duplo clique ou nova tentativa não duplica o projeto.
   const [chaves] = useState(criarGeradorDeChave)
+  // Importação em andamento no servidor (segue mesmo com a janela fechada).
+  const [importacaoId, setImportacaoId] = useState<number | null>(null)
+  const acompanhamento = useQuery({
+    queryKey: ["importacao", importacaoId],
+    queryFn: () => api<Importacao>(`/importacoes/${importacaoId}`),
+    enabled: importacaoId !== null,
+    refetchInterval: 1000,
+  })
 
   function fechar() {
     chaves.renovar()
@@ -173,11 +182,11 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
     aoFechar()
   }
 
-  function concluir(projeto: Projeto, mensagem: string) {
+  function concluir(projetoId: number, mensagem: string) {
     queryClient.invalidateQueries({ queryKey: ["projetos"] })
     toast.success(mensagem)
     fechar()
-    navigate(`/projetos/${projeto.id}`)
+    navigate(`/projetos/${projetoId}`)
   }
 
   const criarManual = useMutation({
@@ -194,7 +203,7 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
       const chave = chaves.para("manual:" + JSON.stringify(corpo))
       return api<Projeto>("/projetos/manual", { method: "POST", json: corpo, headers: { "Idempotency-Key": chave } })
     },
-    onSuccess: (p) => concluir(p, "Projeto criado com as 5 fases do Waterfall."),
+    onSuccess: (p) => concluir(p.id, "Projeto criado com as 5 fases do Waterfall."),
     onError: notificarErro,
   })
 
@@ -210,14 +219,38 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
       const chave = chaves.para(
         "importar:" + JSON.stringify([basico, planilha.name, planilha.size, planilha.lastModified]),
       )
-      return api<ImportacaoResultado>("/projetos/importar", { method: "POST", form, headers: { "Idempotency-Key": chave } })
+      return api<Importacao>("/projetos/importar", { method: "POST", form, headers: { "Idempotency-Key": chave } })
     },
-    onSuccess: (r) => concluir(r.projeto, `Projeto importado com ${r.total_tarefas_importadas} tarefas.`),
+    // 202: a planilha entrou na fila; o andamento é acompanhado abaixo (ou já veio pronta).
+    onSuccess: (imp) => (imp.status === "concluida" || imp.status === "falhou" ? terminar(imp) : setImportacaoId(imp.id)),
     onError: (erro) => {
       if (erro instanceof ApiError && erro.detalhes.length) setErrosPlanilha(erro.detalhes)
       else notificarErro(erro)
     },
   })
+
+  function terminar(imp: Importacao) {
+    setImportacaoId(null)
+    chaves.renovar()
+    if (imp.status === "concluida" && imp.projeto_id !== null) {
+      const mensagem = `Projeto “${imp.nome_projeto}” importado com ${(imp.total_linhas ?? 0).toLocaleString("pt-BR")} tarefas.`
+      if (aberto) concluir(imp.projeto_id, mensagem)
+      else {
+        queryClient.invalidateQueries({ queryKey: ["projetos"] })
+        const projetoId = imp.projeto_id
+        toast.success(mensagem, { action: { label: "Abrir", onClick: () => navigate(`/projetos/${projetoId}`) }, duration: 15_000 })
+      }
+    } else {
+      setErrosPlanilha(imp.erros)
+      toast.error(`Importação de “${imp.arquivo_nome}” falhou: ${imp.mensagem ?? "erro desconhecido"}`, { duration: 15_000 })
+    }
+  }
+
+  useEffect(() => {
+    const imp = acompanhamento.data
+    if (imp && importacaoId === imp.id && (imp.status === "concluida" || imp.status === "falhou")) terminar(imp)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [acompanhamento.data])
 
   const sugerir = useMutation({
     mutationFn: () => api<Sugestao>("/projetos/ia", { method: "POST", json: { texto } }),
@@ -228,6 +261,10 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
     onError: notificarErro,
   })
 
+  // Enquanto a planilha processa no servidor dá para fechar a janela (avisamos quando terminar),
+  // mas não enviar outra por cima.
+  const processando = importacaoId !== null
+  const andamento = acompanhamento.data
   const ocupado = criarManual.isPending || importar.isPending || sugerir.isPending
   const totalSugeridas = sugestao?.fases.reduce((n, f) => n + f.tarefas.filter((t) => t.descricao.trim()).length, 0) ?? 0
   const temDuracao = sugestao?.fases.some((f) => f.tarefas.some((t) => t.duracao)) ?? false
@@ -244,14 +281,14 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
 
   const textoBotao =
     aba === "planilha"
-      ? importar.isPending ? "Importando..." : "Importar"
+      ? importar.isPending ? "Enviando..." : processando ? `Importando... ${andamento?.progresso ?? 0}%` : "Importar"
       : aba === "ia" && !sugestao
         ? sugerir.isPending ? "Analisando o texto..." : "Gerar sugestão"
         : criarManual.isPending ? "Criando..." : aba === "ia" ? `Criar projeto com ${totalSugeridas} tarefas` : "Criar projeto"
 
   const desabilitado =
     ocupado ||
-    (aba === "planilha" && (!arquivo || dados.nome.trim().length < 3)) ||
+    (aba === "planilha" && (processando || !arquivo || dados.nome.trim().length < 3)) ||
     (aba === "manual" && dados.nome.trim().length < 3) ||
     (aba === "ia" && !sugestao && texto.trim().length < 50) ||
     (aba === "ia" && !!sugestao && (dados.nome.trim().length < 3 || (temDuracao && !dados.dataInicio)))
@@ -285,7 +322,7 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
             <TabsContent value="planilha" className="grid gap-4 pt-4">
               <CamposBasicos dados={dados} aoMudar={setDados} />
               <Campo
-                label="Planilha (.xlsx ou .csv, até 5 MB)"
+                label="Planilha (.xlsx ou .csv, até 20 MB e 100 mil linhas)"
                 htmlFor="np-arquivo"
                 dica="Colunas: Fase e Descrição (obrigatórias); Data Início, Data Fim, Responsável e % Conclusão (opcionais). Um arquivo exportado pelo PMO também serve."
               >
@@ -299,6 +336,18 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
                   }}
                 />
               </Campo>
+              {processando && (
+                <div className="grid gap-1.5 rounded-md border bg-muted/40 p-3 text-sm" aria-live="polite">
+                  <div className="flex justify-between">
+                    <span>{andamento?.etapa ?? "Na fila"}</span>
+                    <span className="tabular-nums text-muted-foreground">{andamento?.progresso ?? 0}%</span>
+                  </div>
+                  <Progress value={andamento?.progresso ?? 0} aria-label="Andamento da importação" />
+                  <p className="text-xs text-muted-foreground">
+                    O processamento é no servidor: você pode fechar esta janela e avisamos quando terminar.
+                  </p>
+                </div>
+              )}
               {errosPlanilha.length > 0 && (
                 <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                   <p className="mb-1 font-medium">Nada foi importado. Corrija a planilha:</p>

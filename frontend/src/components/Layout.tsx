@@ -1,4 +1,4 @@
-import { ChevronDown, FolderKanban, KeyRound, ListChecks, LogOut, ScrollText, ShieldCheck, Users } from "lucide-react"
+import { ChevronDown, FolderKanban, KeyRound, ListChecks, LogOut, Radar, ScrollText, ShieldCheck, Users } from "lucide-react"
 import { useState } from "react"
 import { NavLink, Outlet, useNavigate } from "react-router"
 
@@ -62,6 +62,7 @@ export function Layout() {
             <ItemMenu para="/minhas-tarefas" icone={ListChecks}>Minhas tarefas</ItemMenu>
             {admin && <ItemMenu para="/usuarios" icone={Users}>Usuários</ItemMenu>}
             {admin && <ItemMenu para="/auditoria" icone={ScrollText}>Auditoria</ItemMenu>}
+            {usuario.pode_ver_vigia && <ItemMenu para="/vigia" icone={Radar}>Vigia</ItemMenu>}
           </nav>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -142,6 +143,13 @@ class Usuario(Base):
             and self.provedor_auth == ProvedorAuth.LOCAL  # Clerk: o 2FA é configurado no Clerk
             and not self.totp_ativo
         )
+
+    @property
+    def pode_ver_vigia(self) -> bool:
+        """Relatórios do vigia: só admins cujo e-mail está em VIGIA_EMAILS."""
+        from app.config import settings
+
+        return self.papel == PapelUsuario.ADMIN and self.email.lower() in {e.lower() for e in settings.vigia_emails}
 
     @property
     def aguardando_primeiro_login(self) -> bool:
@@ -447,3 +455,79 @@ class ChaveIdempotencia(Base):
     )
 
     __table_args__ = (UniqueConstraint("usuario_id", "chave", name="uq_idempotencia_usuario_chave"),)
+
+
+class GravidadeAchado(str, enum.Enum):
+    CRITICA = "critica"  # sistema fora do ar ou dado corrompido
+    ALTA = "alta"        # erro acontecendo agora / alarme de segurança
+    MEDIA = "media"      # degradação ou risco que tende a virar erro
+    BAIXA = "baixa"      # higiene / atenção
+
+
+class VigiaRodada(Base):
+    """
+    Uma rodada do vigia (python -m app.vigia): os sinais coletados na última hora e os achados.
+    O vigia só OBSERVA: nunca altera código nem dados do sistema.
+    """
+
+    __tablename__ = "vigia_rodadas"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    iniciada_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    concluida_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    janela_inicio: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    pior_gravidade: Mapped[Optional[GravidadeAchado]] = mapped_column(_enum(GravidadeAchado))
+    resumo: Mapped[str] = mapped_column(Text, nullable=False)
+    achados: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    sinais: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    ia_modelo: Mapped[Optional[str]] = mapped_column(String(100))
+    ia_situacao: Mapped[str] = mapped_column(String(200), nullable=False)
+
+
+class StatusImportacao(str, enum.Enum):
+    NA_FILA = "na_fila"
+    PROCESSANDO = "processando"
+    CONCLUIDA = "concluida"
+    FALHOU = "falhou"
+
+
+class Importacao(Base):
+    """
+    Importação de planilha processada em segundo plano (fila RQ + worker).
+    O Postgres é a fonte da verdade do status: se o Redis reiniciar, nada se perde e o vigia
+    enxerga importações paradas. O arquivo fica aqui até ser processado e depois é apagado.
+    """
+
+    __tablename__ = "importacoes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    status: Mapped[StatusImportacao] = mapped_column(
+        _enum(StatusImportacao), nullable=False, default=StatusImportacao.NA_FILA, index=True
+    )
+    progresso: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    etapa: Mapped[Optional[str]] = mapped_column(String(100))
+    # Dados do formulário, já validados na hora do envio.
+    nome_projeto: Mapped[str] = mapped_column(String(200), nullable=False)
+    orcamento_aprovado: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2))
+    data_inicio: Mapped[Optional[date]] = mapped_column(Date)
+    arquivo_nome: Mapped[str] = mapped_column(String(255), nullable=False)
+    arquivo_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    conteudo: Mapped[Optional[bytes]] = mapped_column(LargeBinary)  # apagado ao terminar
+    ip: Mapped[Optional[str]] = mapped_column(String(45))  # para a auditoria feita pelo worker
+    # Idempotency-Key: o mesmo envio repetido devolve a MESMA importação.
+    chave_idempotencia: Mapped[Optional[str]] = mapped_column(String(100))
+    hash_corpo: Mapped[Optional[str]] = mapped_column(String(64))
+    # Resultado
+    total_linhas: Mapped[Optional[int]] = mapped_column(Integer)
+    projeto_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projetos.id", ondelete="SET NULL"))
+    mensagem: Mapped[Optional[str]] = mapped_column(String(500))
+    erros: Mapped[Optional[list]] = mapped_column(JSON)
+    criada_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    iniciada_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    concluida_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("usuario_id", "chave_idempotencia", name="uq_importacao_usuario_chave"),
+        CheckConstraint("progresso BETWEEN 0 AND 100", name="ck_importacao_progresso"),
+    )

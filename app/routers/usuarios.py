@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app import auditoria, dois_fatores, senhas, services
 from app.integracoes import clerk
 from app.database import get_db
-from app.deps import Paginacao, escapar_like, exigir_papel, paginar, salvar
+from app.deps import IdPath, Paginacao, escapar_like, exigir_papel, paginar, salvar
 from app.models import PapelUsuario, ProvedorAuth, Usuario
 from app.schemas import Pagina, RedefinirSenha, UsuarioCreate, UsuarioRead, UsuarioResumo, UsuarioUpdate
 from app.rate_limit import falhas_login
@@ -127,7 +127,7 @@ def listar_usuarios(
 
 @router.patch("/{usuario_id}", response_model=UsuarioRead)
 def atualizar_usuario(
-    usuario_id: int,
+    usuario_id: IdPath,
     payload: UsuarioUpdate,
     db: Session = Depends(get_db),
     admin: Usuario = Depends(somente_admin),
@@ -154,7 +154,7 @@ def atualizar_usuario(
 
 @router.post("/{usuario_id}/redefinir-senha", status_code=status.HTTP_204_NO_CONTENT)
 def redefinir_senha(
-    usuario_id: int,
+    usuario_id: IdPath,
     payload: RedefinirSenha,
     db: Session = Depends(get_db),
     admin: Usuario = Depends(somente_admin),
@@ -189,7 +189,7 @@ def redefinir_senha(
 
 @router.post("/{usuario_id}/encerrar-sessoes", status_code=status.HTTP_204_NO_CONTENT)
 def encerrar_sessoes(
-    usuario_id: int,
+    usuario_id: IdPath,
     db: Session = Depends(get_db),
     admin: Usuario = Depends(somente_admin),
 ) -> None:
@@ -203,7 +203,7 @@ def encerrar_sessoes(
 
 @router.post("/{usuario_id}/redefinir-2fa", status_code=status.HTTP_204_NO_CONTENT)
 def redefinir_2fa(
-    usuario_id: int,
+    usuario_id: IdPath,
     db: Session = Depends(get_db),
     admin: Usuario = Depends(somente_admin),
 ) -> None:

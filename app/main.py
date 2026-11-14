@@ -5,18 +5,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app import registro
 from app.auditoria import ip_requisicao
 from app.config import settings
 from app.database import engine
 from app.limites import KB, MB, LimiteCorpo, RecusaNul
-from app.routers import auditoria, auth, comentarios, pilares, projetos, tarefas, usuarios
+from app.routers import auditoria, auth, comentarios, importacoes, pilares, projetos, tarefas, usuarios, vigia
 
 EM_PRODUCAO = settings.ambiente == "prod"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+registro.configurar(settings.log_arquivo)
 logger = logging.getLogger("pmo")
 
 # As tabelas são criadas/alteradas pelo Alembic: `alembic upgrade head`.
@@ -40,10 +38,12 @@ app.add_middleware(
 
 
 # JSON comum: 1 MB sobra (300 tarefas com descrição longa dão ~200 KB).
-# Importação: 5 MB de planilha + a sobra do multipart.
+# Importação: IMPORTACAO_MAX_MB de planilha (20 MB) + a sobra do multipart.
 # Ordem: o último adicionado é o mais externo. LimiteCorpo corta o tamanho ANTES de o RecusaNul ler o corpo.
 app.add_middleware(RecusaNul)
-app.add_middleware(LimiteCorpo, padrao=1 * MB, por_rota={"/projetos/importar": 5 * MB + 64 * KB})
+app.add_middleware(LimiteCorpo, padrao=1 * MB, por_rota={"/projetos/importar": settings.importacao_max_mb * MB + 64 * KB})
+# Mais externo de todos: mede o tempo total e registra até as respostas dos outros middlewares (413, 422).
+app.add_middleware(registro.RegistroDeAcesso)
 
 
 @app.middleware("http")
@@ -86,3 +86,5 @@ app.include_router(tarefas.minhas_router)
 app.include_router(comentarios.router)
 app.include_router(pilares.router)
 app.include_router(auditoria.router)
+app.include_router(vigia.router)
+app.include_router(importacoes.router)

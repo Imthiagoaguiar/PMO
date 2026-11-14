@@ -14,10 +14,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import auditoria
 from app.database import get_db
-from app.deps import Paginacao, get_usuario_atual, obter_projeto_visivel, paginar, pode_gerenciar, salvar
+from app.deps import IdPath, Paginacao, get_usuario_atual, obter_projeto_visivel, paginar, pode_gerenciar, salvar
 from app.models import Comentario, Fase, Projeto, Tarefa, Usuario
 from app.schemas import ComentarioCreate, ComentarioRead, ComentarioUpdate, Pagina
-from app.security import agora_utc
+from app.security import ID_MAXIMO, agora_utc
 
 router = APIRouter(prefix="/projetos/{projeto_id}/comentarios", tags=["Comentários"])
 
@@ -41,8 +41,8 @@ def _comentario_do_projeto(db: Session, projeto: Projeto, comentario_id: int) ->
 
 @router.get("", response_model=Pagina[ComentarioRead])
 def listar_comentarios(
-    projeto_id: int,
-    tarefa_id: Optional[int] = Query(None, description="Só os comentários desta tarefa"),
+    projeto_id: IdPath,
+    tarefa_id: Optional[int] = Query(None, ge=1, le=ID_MAXIMO, description="Só os comentários desta tarefa"),
     somente_projeto: bool = Query(False, description="Só os comentários gerais (sem tarefa)"),
     pagina: Paginacao = Depends(),
     db: Session = Depends(get_db),
@@ -65,7 +65,7 @@ def listar_comentarios(
 
 @router.post("", response_model=ComentarioRead, status_code=status.HTTP_201_CREATED)
 def comentar(
-    projeto_id: int,
+    projeto_id: IdPath,
     payload: ComentarioCreate,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -89,8 +89,8 @@ def comentar(
 
 @router.patch("/{comentario_id}", response_model=ComentarioRead)
 def editar_comentario(
-    projeto_id: int,
-    comentario_id: int,
+    projeto_id: IdPath,
+    comentario_id: IdPath,
     payload: ComentarioUpdate,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
@@ -113,8 +113,8 @@ def editar_comentario(
 
 @router.delete("/{comentario_id}", status_code=status.HTTP_204_NO_CONTENT)
 def excluir_comentario(
-    projeto_id: int,
-    comentario_id: int,
+    projeto_id: IdPath,
+    comentario_id: IdPath,
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> None:

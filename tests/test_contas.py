@@ -10,7 +10,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import PapelUsuario, ProvedorAuth, Usuario
 from app.rate_limit import limite_login, resetar_todos
-from tests.conftest import SENHA
+from tests.conftest import SENHA, postar_importacao
 
 ADMIN, ALVO, OUTRO = "admin@empresa.com.br", "alvo@empresa.com.br", "outro@empresa.com.br"
 TEMPORARIA = "Temporaria-Cavalo-Bateria-7"
@@ -244,10 +244,10 @@ def test_corpo_grande_demais_e_recusado(client, criar_usuario, login):
 def test_upload_tem_limite_proprio(client, criar_usuario, login):
     criar_usuario(ALVO, PapelUsuario.GERENTE)
     h = login(ALVO)
-    grande = b"Fase;Descricao\n" + b"Execucao;" + b"x" * (6 * 1024 * 1024) + b"\n"
-    r = client.post("/projetos/importar", data={"nome_projeto": "Grande"}, files={"arquivo": ("a.csv", grande)}, headers=h)
+    grande = b"Fase;Descricao\n" + b"Execucao;" + b"x" * (21 * 1024 * 1024) + b"\n"  # limite: 20 MB
+    r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Grande"}, files={"arquivo": ("a.csv", grande)}, headers=h)
     assert r.status_code == 413
-    # 1,5 MB passa do limite do JSON, mas cabe no limite do upload (chega na validação da planilha).
-    medio = b"Fase;Descricao\n" + b"Execucao;tarefa\n" * 100_000
-    r = client.post("/projetos/importar", data={"nome_projeto": "Medio"}, files={"arquivo": ("a.csv", medio)}, headers=h)
+    # 1,3 MB passa do limite do JSON, mas cabe no limite do upload (chega na validação da planilha).
+    medio = b"Fase;Descricao\n" + (b"Execucao;" + b"t" * 200 + b"\n") * 6_000
+    r = postar_importacao(client,"/projetos/importar", data={"nome_projeto": "Medio"}, files={"arquivo": ("a.csv", medio)}, headers=h)
     assert r.status_code != 413

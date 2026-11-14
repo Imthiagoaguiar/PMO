@@ -6,7 +6,8 @@ from typing import Annotated, Any, Dict, Generic, List, Literal, Optional, TypeV
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.models import FASES_WATERFALL, FarolPilar, PapelProjeto, PapelUsuario, ProvedorAuth, StatusProjeto
+from app.models import FASES_WATERFALL, FarolPilar, GravidadeAchado, StatusImportacao, PapelProjeto, PapelUsuario, ProvedorAuth, StatusProjeto
+from app.security import ID_MAXIMO
 from app.texto import normalizar
 
 # NIST 800-63B: comprimento importa mais que regras de "caractere especial".
@@ -14,6 +15,9 @@ from app.texto import normalizar
 SENHA_MIN, SENHA_MAX = 12, 128
 
 T = TypeVar("T")
+
+# ID enviado no corpo (responsável, pilar, fase, membro...): de 1 a 2^31-1, o INTEGER do Postgres.
+IdBanco = Annotated[int, Field(ge=1, le=ID_MAXIMO)]
 
 
 class Pagina(BaseModel, Generic[T]):
@@ -208,7 +212,7 @@ class ProjetoUpdate(BaseModel):
     data_inicio: Optional[DataProjeto] = None
     status: Optional[StatusProjeto] = None
     versao: Optional[int] = Field(
-        None, ge=1,
+        None, ge=1, le=ID_MAXIMO,
         description="Versão que você leu/editou. Se alguém salvou depois dela, a resposta é 409 (nada é sobrescrito).",
     )
 
@@ -228,8 +232,8 @@ class TarefaCreate(BaseModel):
     data_inicio: Optional[DataProjeto] = None
     data_fim: Optional[DataProjeto] = None
     responsavel: Optional[str] = Field(None, max_length=150, description="Nome livre (pessoa sem conta)")
-    responsavel_id: Optional[int] = Field(None, description="Usuário membro do projeto")
-    pilar_id: Optional[int] = Field(None, description="Pilar (frente de trabalho) deste projeto")
+    responsavel_id: Optional[IdBanco] = Field(None, description="Usuário membro do projeto")
+    pilar_id: Optional[IdBanco] = Field(None, description="Pilar (frente de trabalho) deste projeto")
     percentual_conclusao: int = Field(0, ge=0, le=100)
     duracao_dias_uteis: Optional[int] = Field(
         None, ge=1, le=1000,
@@ -254,20 +258,20 @@ class TarefaCreate(BaseModel):
 
 
 class TarefaUpdate(BaseModel):
-    fase_id: Optional[int] = Field(None, description="Move a tarefa para outra fase do mesmo projeto")
+    fase_id: Optional[IdBanco] = Field(None, description="Move a tarefa para outra fase do mesmo projeto")
     descricao: Optional[str] = Field(None, min_length=1, max_length=500)
     data_inicio: Optional[DataProjeto] = None
     data_fim: Optional[DataProjeto] = None
     responsavel: Optional[str] = Field(None, max_length=150)
-    responsavel_id: Optional[int] = Field(None, description="null remove o responsável")
-    pilar_id: Optional[int] = Field(None, description="null tira a tarefa do pilar")
+    responsavel_id: Optional[IdBanco] = Field(None, description="null remove o responsável")
+    pilar_id: Optional[IdBanco] = Field(None, description="null tira a tarefa do pilar")
     percentual_conclusao: Optional[int] = Field(None, ge=0, le=100)
     duracao_dias_uteis: Optional[int] = Field(
         None, ge=1, le=1000,
         description="Calcula a data_fim a partir da data_inicio, pulando fins de semana e feriados nacionais",
     )
     versao: Optional[int] = Field(
-        None, ge=1,
+        None, ge=1, le=ID_MAXIMO,
         description="Versão que você leu/editou. Se alguém salvou depois dela, a resposta é 409 (nada é sobrescrito).",
     )
 
@@ -312,7 +316,8 @@ class FaseRead(BaseModel):
     id: int
     titulo: str
     ordem_sequencia: int
-    tarefas: List[TarefaRead] = []
+    tarefas: List[TarefaRead] = Field(default_factory=list, description="As primeiras 200; o resto em GET /projetos/{id}/tarefas")
+    total_tarefas: int = Field(0, description="Total de tarefas da fase (pode ser maior que len(tarefas))")
 
 
 class ProjetoResumo(BaseModel):
@@ -376,9 +381,23 @@ class SugestaoProjetoIA(BaseModel):
     modelo: str
 
 
-class ImportacaoResultado(BaseModel):
-    projeto: ProjetoRead
-    total_tarefas_importadas: int
+class ImportacaoRead(BaseModel):
+    """Importação de planilha em segundo plano. Consulte até `status` ser "concluida" ou "falhou"."""
+
+    id: int
+    status: StatusImportacao
+    progresso: int = Field(..., description="0 a 100 (ao vivo enquanto processa)")
+    etapa: Optional[str]
+    nome_projeto: str
+    arquivo_nome: str
+    arquivo_bytes: int
+    total_linhas: Optional[int] = Field(None, description="Tarefas importadas (quando concluída)")
+    projeto_id: Optional[int] = Field(None, description="Projeto criado (quando concluída)")
+    mensagem: Optional[str] = Field(None, description="Por que falhou")
+    erros: List[str] = Field(default_factory=list, description="Erros por linha da planilha (quando falhou)")
+    criada_em: InstanteUTC
+    iniciada_em: Optional[InstanteUTC]
+    concluida_em: Optional[InstanteUTC]
 
 
 class FaseIndicadores(BaseModel):
@@ -424,6 +443,7 @@ class UsuarioRead(UsuarioResumo):
     trocar_senha: bool = Field(..., description="Precisa trocar a senha antes de usar o sistema")
     dois_fatores_ativo: bool
     exige_configurar_2fa: bool = Field(..., description="Admin sem 2FA: precisa ativar antes de usar o sistema")
+    pode_ver_vigia: bool = Field(False, description="Admin listado em VIGIA_EMAILS: vê os relatórios do vigia")
 
 
 class UsuarioCreate(BaseModel):
@@ -537,7 +557,7 @@ class StatusDoisFatores(BaseModel):
 
 
 class MembroAdicionar(BaseModel):
-    usuario_id: int
+    usuario_id: IdBanco
     papel: PapelProjeto = PapelProjeto.VISUALIZADOR
 
 
@@ -572,7 +592,7 @@ class PilarUpdate(BaseModel):
     status_texto: Optional[str] = Field(None, max_length=1000, description="Situação da frente, em poucas linhas")
     valor_orcado: Optional[Dinheiro] = None
     valor_realizado: Optional[Dinheiro] = None
-    versao: Optional[int] = Field(None, ge=1, description="Versão que você editou (409 se alguém salvou depois)")
+    versao: Optional[int] = Field(None, ge=1, le=ID_MAXIMO, description="Versão que você editou (409 se alguém salvou depois)")
 
     @field_validator("nome", mode="before")
     @classmethod
@@ -614,7 +634,7 @@ class PilarRead(BaseModel):
 
 class ComentarioCreate(BaseModel):
     texto: str = Field(..., min_length=1, max_length=2000)
-    tarefa_id: Optional[int] = Field(None, description="Vazio = comentário no projeto")
+    tarefa_id: Optional[IdBanco] = Field(None, description="Vazio = comentário no projeto")
 
     @field_validator("texto", mode="before")
     @classmethod
@@ -659,3 +679,42 @@ class AuditoriaRead(BaseModel):
     detalhes: Optional[Dict[str, Any]]
     ip: Optional[str]
     usuario: Optional[UsuarioResumo] = Field(None, description="Quem fez a ação (nulo: anônimo ou excluído)")
+
+
+# ---------- Vigia ----------
+
+
+class AchadoVigia(BaseModel):
+    codigo: Optional[str] = None
+    titulo: str
+    gravidade: GravidadeAchado
+    evidencias: List[str] = []
+    causa_provavel: Optional[str] = None
+    impacto: Optional[str] = None
+    como_investigar: List[str] = []
+    origem: Literal["regra", "ia"]
+
+
+class VigiaRodadaResumo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    iniciada_em: InstanteUTC
+    concluida_em: InstanteUTC
+    janela_inicio: InstanteUTC
+    pior_gravidade: Optional[GravidadeAchado]
+    resumo: str
+    total_achados: int = 0
+    ia_situacao: str
+
+
+class VigiaRodadaRead(VigiaRodadaResumo):
+    achados: List[AchadoVigia]
+    sinais: Dict[str, Any]
+    ia_modelo: Optional[str]
+
+
+class VigiaSituacao(BaseModel):
+    intervalo_minutos: int
+    ultima_rodada_em: Optional[InstanteUTC]
+    atrasado: bool = Field(..., description="Sem rodada há mais de 2 intervalos: o vigia provavelmente parou")

@@ -5,7 +5,7 @@ import jwt
 from app.config import settings
 from app.models import PapelUsuario
 from app.security import agora_utc
-from tests.conftest import SENHA
+from tests.conftest import SENHA, postar_importacao
 
 ADMIN, GERENTE, GERENTE2, MEMBRO = (
     "admin@empresa.com.br",
@@ -194,7 +194,7 @@ def test_isolamento_de_projetos_por_membro(client, criar_usuario, login):
 def test_importacao_autenticada(client, criar_usuario, login):
     criar_usuario(GERENTE, PapelUsuario.GERENTE)
     with open("exemplos/cronograma_exemplo.csv", "rb") as f:
-        r = client.post(
+        r = postar_importacao(client,
             "/projetos/importar",
             data={"nome_projeto": "Importado"},
             files={"arquivo": ("cronograma.csv", f.read())},
@@ -206,7 +206,7 @@ def test_importacao_autenticada(client, criar_usuario, login):
 
 def test_xlsx_corrompido_nao_vaza_detalhes(client, criar_usuario, login):
     criar_usuario(GERENTE, PapelUsuario.GERENTE)
-    r = client.post(
+    r = postar_importacao(client,
         "/projetos/importar",
         data={"nome_projeto": "Ruim"},
         files={"arquivo": ("p.xlsx", b"isto nao e um zip")},

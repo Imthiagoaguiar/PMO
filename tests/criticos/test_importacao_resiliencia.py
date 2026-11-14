@@ -153,8 +153,12 @@ def test_arquivo_disfarcado_e_recusado_sem_erro_500(importar, banco_vazio, nome,
     banco_vazio()
 
 
-def test_zip_bomb_e_recusado_antes_de_descompactar(importar, banco_vazio):
-    """~60 KB no upload que viram 60 MB ao abrir: recusado sem gastar memória lendo."""
+def test_zip_bomb_e_recusado_antes_de_descompactar(importar, banco_vazio, monkeypatch):
+    """~60 KB no upload que viram 60 MB ao abrir: recusado sem gastar memória lendo.
+    (O teto real é 400 MB, para caber 100 mil linhas; aqui ele baixa para o teste não alocar 400 MB.)"""
+    from app import services
+
+    monkeypatch.setattr(services, "MAX_XLSX_DESCOMPACTADO", 50 * 1024 * 1024)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", "<Types/>")
@@ -195,10 +199,16 @@ def test_xlsx_so_com_cabecalho(importar, banco_vazio):
     banco_vazio()
 
 
-def test_limite_de_linhas(importar, banco_vazio):
+def test_limite_de_linhas(importar, banco_vazio, monkeypatch):
+    """O limite real é 100 mil linhas (IMPORTACAO_MAX_LINHAS); aqui baixa para 5 mil, para o teste ser rápido."""
+    from app import services
+    from app.config import settings
+
+    assert settings.importacao_max_linhas == 100_000
+    monkeypatch.setattr(services, "MAX_LINHAS", 5_000)
     conteudo = ("Fase;Descrição\n" + "Iniciação;T\n" * 5_001).encode()
     r = importar(conteudo)
-    assert r.status_code == 422 and "5000" in r.json()["detail"]["mensagem"]
+    assert r.status_code == 422 and "5.000 linhas" in r.json()["detail"]["mensagem"]
     banco_vazio()
 
 
