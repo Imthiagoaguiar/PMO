@@ -42,6 +42,7 @@ CACHES_PERMITIDOS = {
     "pip": HOME / "Library/Caches/pip" if sys.platform == "darwin" else HOME / ".cache/pip",
     "npm": HOME / ".npm/_cacache",
     "Homebrew": HOME / "Library/Caches/Homebrew",
+    "uv": HOME / ".cache/uv",  # usado para gerar os locks (scripts/travar-dependencias.sh)
 }
 
 
@@ -120,6 +121,8 @@ def caches_de_desenvolvimento(resultado: Resultado, simular: bool,
             executar([sys.executable, "-m", "pip", "cache", "purge"], capture_output=True, check=False)
         elif nome == "npm" and shutil.which("npm"):
             executar([shutil.which("npm"), "cache", "clean", "--force"], capture_output=True, check=False)
+        elif nome == "uv" and (uv := shutil.which("uv") or str(Path(sys.executable).with_name("uv"))) and Path(uv).exists():
+            executar([uv, "cache", "clean"], capture_output=True, check=False)
         else:
             _esvaziar(pasta)
 

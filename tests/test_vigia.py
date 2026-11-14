@@ -212,6 +212,7 @@ def test_sistema_saudavel_nao_gera_achado():
 
 @pytest.mark.parametrize("sobrescrever, codigo, gravidade", [
     ({"saude": {"ok": False, "status": 503, "corpo": {"banco": "indisponivel"}}}, "api_fora_do_ar", "critica"),
+    ({"saude": {"ok": False, "status": None, "erro": "ConnectError"}}, "api_desligada_dev", "baixa"),
     ({"migracao": {"em_dia": False, "banco": "a", "codigo": "b"}}, "migracao_pendente", "alta"),
     ({"integridade": [{"codigo": "projeto_sem_5_fases", "descricao": "x", "quantidade": 1, "exemplos": [7]}]},
      "integridade_projeto_sem_5_fases", "critica"),
@@ -231,6 +232,12 @@ def test_sistema_saudavel_nao_gera_achado():
 def test_regras(sobrescrever, codigo, gravidade):
     achados = regras.avaliar(_sinais_base(**sobrescrever))
     assert [(a["codigo"], a["gravidade"]) for a in achados] == [(codigo, gravidade)]
+
+
+def test_api_sem_resposta_em_producao_e_critica(monkeypatch):
+    monkeypatch.setattr(settings, "ambiente", "prod")
+    achados = regras.avaliar(_sinais_base(saude={"ok": False, "status": None, "erro": "ConnectError"}))
+    assert [(a["codigo"], a["gravidade"]) for a in achados] == [("api_fora_do_ar", "critica")]
 
 
 def test_pior_gravidade():

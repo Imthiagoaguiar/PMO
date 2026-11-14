@@ -36,7 +36,13 @@ def avaliar(s: Dict[str, Any]) -> List[Dict[str, Any]]:
     achados: List[Dict[str, Any]] = []
     log, saude, migracao = s["log"], s["saude"], s["migracao"]
 
-    if not saude.get("ok"):
+    if not saude.get("ok") and settings.ambiente == "dev" and saude.get("status") is None:
+        # No computador de desenvolvimento a API só fica ligada enquanto alguém trabalha: desligada
+        # não é incidente. (Se ela responder com erro, aí sim é problema, e cai na regra abaixo.)
+        achados.append(_achado("api_desligada_dev", "A API está desligada (ambiente de desenvolvimento)", "baixa",
+                               ["nenhuma resposta em " + settings.vigia_api_url],
+                               ["Normal fora do horário de trabalho. Em produção (AMBIENTE=prod) isto é crítico."]))
+    elif not saude.get("ok"):
         achados.append(_achado("api_fora_do_ar", "A API não respondeu ao health check", "critica",
                                [f"GET /saude: status {saude.get('status')} {saude.get('erro', '')}".strip(),
                                 f"banco: {saude.get('corpo', {}).get('banco', 'desconhecido')}"],
