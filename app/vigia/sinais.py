@@ -42,8 +42,12 @@ def resumir(eventos: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     excecoes: Dict[str, Dict[str, Any]] = {}
     avisos: Counter = Counter()
+    limpezas = [
+        {k: e.get(k) for k in ("ts", "livre_antes_gb", "livre_depois_gb", "liberado_gb", "itens")}
+        for e in eventos if e.get("tipo") == "limpeza"
+    ]
     for e in eventos:
-        if e.get("tipo") == "acesso":
+        if e.get("tipo") in ("acesso", "limpeza"):
             continue
         nivel = e.get("nivel")
         if nivel in ("ERROR", "CRITICAL"):
@@ -74,6 +78,7 @@ def resumir(eventos: List[Dict[str, Any]]) -> Dict[str, Any]:
         "erros": sorted(excecoes.values(), key=lambda x: -x["quantidade"])[:20],
         "avisos": [{"mensagem": m, "quantidade": q} for m, q in avisos.most_common(15)],
         "rotas_lentas": sorted(lentas, key=lambda x: -x["p95_ms"])[:10],
+        "limpezas": limpezas[-5:],
     }
 
 

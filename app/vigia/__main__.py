@@ -48,8 +48,8 @@ def instancia_unica() -> Iterator[bool]:
 
 
 def _coletores() -> List[ColetorDeLog]:
-    """Um por arquivo: o log da API e o do worker da fila (os erros de importação acontecem lá)."""
-    arquivos = [a for a in (settings.log_arquivo, settings.log_arquivo_trabalhador) if a]
+    """Um por arquivo: o log da API, o do worker da fila e o da limpeza do disco."""
+    arquivos = [a for a in (settings.log_arquivo, settings.log_arquivo_trabalhador, settings.log_arquivo_limpeza) if a]
     if not settings.log_arquivo:
         logger.warning("Vigia: LOG_ARQUIVO não configurado; as rodadas não terão os sinais do log da API")
     return [ColetorDeLog(Path(a)) for a in arquivos]

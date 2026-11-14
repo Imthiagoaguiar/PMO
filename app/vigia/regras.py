@@ -143,6 +143,15 @@ def avaliar(s: Dict[str, Any]) -> List[Dict[str, Any]]:
                                [f"{gb} GB livres, {percentual}% do disco"],
                                ["Sem espaço, o Postgres e o log param de gravar: limpe logs antigos e backups"]))
 
+    for limpeza in log.get("limpezas", []):
+        if limpeza.get("itens"):
+            achados.append(_achado(
+                "limpeza_automatica", f"Disco quase cheio: a limpeza automática liberou {limpeza.get('liberado_gb')} GB", "baixa",
+                [f"livre: {limpeza.get('livre_antes_gb')} GB antes, {limpeza.get('livre_depois_gb')} GB depois",
+                 "apagou: " + "; ".join(limpeza.get("itens") or [])[:300]],
+                ["Se o disco continua baixo, a limpeza não alcança o que encheu: veja Lixeira, Downloads e backups"],
+            ))
+
     if s.get("coletor", {}).get("descartados"):
         achados.append(_achado("log_transbordou", "O vigia descartou eventos do log por excesso de volume", "media",
                                [f"{s['coletor']['descartados']} evento(s) descartados"],

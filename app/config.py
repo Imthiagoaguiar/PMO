@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     # Log do worker da fila (python -m app.trabalhador), também lido pelo vigia.
     log_arquivo_trabalhador: Optional[str] = "logs/trabalhador.log"
 
+    # ---------- Limpeza do disco (python -m app.limpeza) ----------
+    # Abaixo deste espaço livre, a limpeza apaga o que é recriável (logs antigos, caches, registros velhos).
+    limpeza_min_gb: float = Field(10, ge=1, le=10_000)
+    limpeza_retencao_dias: int = Field(90, ge=7, le=3650)
+    log_arquivo_limpeza: Optional[str] = "logs/limpeza.log"
+
     # ---------- Fila de importação (Redis + RQ) ----------
     redis_url: str = "redis://localhost:6379/0"
     # true = o job roda na hora, dentro da própria requisição (testes; dispensa Redis e worker).

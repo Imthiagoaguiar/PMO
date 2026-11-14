@@ -11,6 +11,7 @@ os.environ["VERIFICAR_SENHAS_VAZADAS"] = "false"  # nenhum teste acessa a intern
 os.environ["EXIGIR_2FA_ADMIN"] = "false"
 os.environ["LOG_ARQUIVO"] = ""  # os testes não escrevem em logs/pmo.log
 os.environ["LOG_ARQUIVO_TRABALHADOR"] = ""
+os.environ["LOG_ARQUIVO_LIMPEZA"] = ""
 os.environ["FILA_SINCRONA"] = "true"  # importação roda na hora (fakeredis): sem Redis nem worker  # ligado só nos testes de 2FA (test_dois_fatores.py)
 
 from typing import Callable, Dict  # noqa: E402

@@ -237,4 +237,26 @@ Sem a variável, a integração fica desligada. Detalhes em `.env.example`.
 
 ## Manutenção
 
+### Limpeza do disco
+
+Quando o disco fica abaixo de `LIMPEZA_MIN_GB` livres (padrão 10 GB), `python -m app.limpeza` apaga só
+o que é **recriável**:
+
+- logs rotacionados antigos;
+- relatórios do vigia e registros de importação com mais de 90 dias;
+- refresh tokens vencidos;
+- com `--caches-de-desenvolvimento`, os caches do pip, do npm e do Homebrew.
+
+Ela **nunca** toca na Lixeira, em Downloads ou em arquivos pessoais.
+
+```bash
+python -m app.limpeza --simular   # mostra o que apagaria, sem apagar
+scripts/instalar-limpeza.sh       # macOS: confere o disco a cada hora (launchd) e avisa por notificação
+scripts/instalar-limpeza.sh --remover
+```
+
+Cada limpeza aparece também na página **Vigia**. Se o disco continuar baixo depois dela, o que está
+enchendo não é recriável: veja a Lixeira e a pasta Downloads.
+
+
 Agende diariamente: `python -m app.cli limpar-tokens` (remove refresh tokens expirados).
