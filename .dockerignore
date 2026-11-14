@@ -13,3 +13,5 @@ deploy/.env.producao
 frontend/node_modules
 frontend/dist
 frontend/tsconfig.tsbuildinfo
+frontend/e2e/.resultados
+frontend/e2e/.relatorio

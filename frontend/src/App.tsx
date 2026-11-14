@@ -4,6 +4,7 @@ import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "reac
 import { TrocaObrigatoria } from "@/components/AlterarSenha"
 import { Carregando } from "@/components/comum"
 import { DoisFatoresObrigatorio } from "@/components/DoisFatores"
+import { ErroDeTela } from "@/components/ErroDeTela"
 import { Layout } from "@/components/Layout"
 import { useAuth } from "@/lib/auth"
 import type { PapelUsuario } from "@/lib/tipos"
@@ -39,26 +40,35 @@ function SomentePapel({ papeis, children }: { papeis: PapelUsuario[]; children: 
   return children
 }
 
-const router = createBrowserRouter([
-  { path: "/login", element: <Login /> },
+export const rotas = [
+  { path: "/login", element: <Login />, errorElement: <ErroDeTela /> },
   {
     element: (
       <ComSessao>
         <Layout />
       </ComSessao>
     ),
+    errorElement: <ErroDeTela />, // se o próprio layout quebrar: a tela de erro ocupa a página
     children: [
-      { index: true, element: <Navigate to="/projetos" replace /> },
-      { path: "/projetos", element: <Projetos /> },
-      { path: "/projetos/:id", element: <ProjetoDetalhe /> },
-      { path: "/minhas-tarefas", element: <MinhasTarefas /> },
-      { path: "/usuarios", element: <SomentePapel papeis={["admin"]}><Usuarios /></SomentePapel> },
-      { path: "/auditoria", element: <SomentePapel papeis={["admin"]}><Auditoria /></SomentePapel> },
-      { path: "/vigia", element: <SomenteVigia><Vigia /></SomenteVigia> },
-      { path: "*", element: <Navigate to="/projetos" replace /> },
+      {
+        // Erro numa tela: aparece DENTRO do layout, com o menu para sair dali.
+        errorElement: <ErroDeTela />,
+        children: [
+          { index: true, element: <Navigate to="/projetos" replace /> },
+          { path: "/projetos", element: <Projetos /> },
+          { path: "/projetos/:id", element: <ProjetoDetalhe /> },
+          { path: "/minhas-tarefas", element: <MinhasTarefas /> },
+          { path: "/usuarios", element: <SomentePapel papeis={["admin"]}><Usuarios /></SomentePapel> },
+          { path: "/auditoria", element: <SomentePapel papeis={["admin"]}><Auditoria /></SomentePapel> },
+          { path: "/vigia", element: <SomenteVigia><Vigia /></SomenteVigia> },
+          { path: "*", element: <Navigate to="/projetos" replace /> },
+        ],
+      },
     ],
   },
-])
+]
+
+const router = createBrowserRouter(rotas)
 
 export function App() {
   return <RouterProvider router={router} />

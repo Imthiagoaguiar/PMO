@@ -50,7 +50,7 @@ Na pasta raiz do projeto:
 ```bash
 python3.14 -m venv .venv
 source .venv/bin/activate          # o prompt passa a mostrar (.venv)
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.lock   # versões exatas, conferidas por hash
 cp .env.example .env
 ```
 
@@ -127,7 +127,7 @@ python -m app.trabalhador
 cd frontend && npm run dev
 ```
 
-Depois de um `git pull`, rode também `pip install -r requirements-dev.txt` (API) e `npm install`
+Depois de um `git pull`, rode também `pip install -r requirements-dev.lock` (API) e `npm install`
 (front), caso alguma dependência tenha mudado.
 
 ### Vigia (agente que procura erros e falhas)
@@ -183,6 +183,25 @@ TEST_DATABASE_URL=postgresql+psycopg2://... pytest -q  # Postgres descartável (
 ```
 
 As APIs externas são simuladas nos testes; nenhum teste acessa a rede.
+
+Front-end:
+
+```bash
+cd frontend
+npm run lint        # oxlint: inclui as regras de hooks do React (o ESLint não roda com o TypeScript 7)
+npm test            # Vitest: funções e componentes
+cd .. && PW_CHANNEL=chrome scripts/e2e.sh   # Playwright no seu Chrome: API num banco descartável
+```
+
+### Dependências
+
+- **O que o projeto pede:** `requirements.txt` e `requirements-dev.txt`, com versões mínimas.
+- **O que é instalado de verdade:** `requirements.lock` e `requirements-dev.lock`, com versões exatas e
+  hash de cada pacote, válidos para macOS e Linux. O Docker e o CI instalam por eles.
+- **Para atualizar:** `scripts/travar-dependencias.sh`. Ele só aceita versões publicadas há pelo menos
+  14 dias, porque um pacote comprometido costuma ser descoberto em poucos dias. A exceção são as
+  correções de segurança apontadas pelo `pip-audit`, listadas no próprio script.
+- **No front,** as ferramentas novas foram fixadas em versões exatas com a mesma regra dos 14 dias.
 
 ```
 tests/

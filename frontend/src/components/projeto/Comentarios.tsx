@@ -145,6 +145,7 @@ export function Comentarios({ projeto, tarefa }: Props) {
         <Textarea
           rows={3}
           maxLength={MAX}
+          aria-label={tarefa ? "Novo comentário sobre a tarefa" : "Novo comentário"}
           placeholder={tarefa ? "Comente sobre esta tarefa..." : "Escreva um comentário sobre o projeto..."}
           value={texto}
           onChange={(e) => setTexto(e.target.value)}

@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     limpeza_retencao_dias: int = Field(90, ge=7, le=3650)
     log_arquivo_limpeza: Optional[str] = "logs/limpeza.log"
 
+    # Onde ficam os contadores de limite/bloqueio: "auto"/"redis" = no Redis, compartilhados entre os
+    # processos da API (com volta para a memória se o Redis cair); "memoria" = em cada processo.
+    limites_backend: Literal["auto", "redis", "memoria"] = "auto"
+
     # ---------- Fila de importação (Redis + RQ) ----------
     redis_url: str = "redis://localhost:6379/0"
     # true = o job roda na hora, dentro da própria requisição (testes; dispensa Redis e worker).

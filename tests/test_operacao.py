@@ -207,4 +207,4 @@ def test_exportar_e_reimportar(client, cenario):
 
 
 def test_health_check(client):
-    assert client.get("/saude").json() == {"status": "ok", "banco": "ok"}
+    assert client.get("/saude").json() == {"status": "ok", "banco": "ok", "fila": "sincrona"}

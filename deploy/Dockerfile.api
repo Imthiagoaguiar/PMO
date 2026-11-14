@@ -9,8 +9,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Versões exatas e conferidas por hash (scripts/travar-dependencias.sh): o mesmo conjunto testado no CI.
+COPY requirements.lock .
+RUN pip install --require-hashes -r requirements.lock
 
 COPY alembic.ini .
 COPY migrations ./migrations
@@ -25,5 +26,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/saude', timeout=4).status == 200 else 1)"
 
 # --proxy-headers: o IP real vem do Caddy (bloqueios de login e auditoria por IP).
-# 1 worker: os limites de requisição ficam em memória por processo (ver app/rate_limit.py).
+# Processos da API: WEB_CONCURRENCY (o uvicorn lê sozinho). Os limites e bloqueios ficam no Redis,
+# compartilhados entre os processos (ver app/rate_limit.py).
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

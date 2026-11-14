@@ -17,3 +17,5 @@ dist/
 logs/
 backups/
 deploy/.env.producao
+e2e/.resultados/
+e2e/.relatorio/

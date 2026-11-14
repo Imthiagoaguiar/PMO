@@ -68,14 +68,36 @@ async def contexto_e_headers(request: Request, call_next):
 
 @app.get("/saude", tags=["Infra"], include_in_schema=not EM_PRODUCAO)
 def saude() -> JSONResponse:
-    """Health check para load balancer / orquestrador: verifica se a API alcança o banco."""
+    """
+    Health check do balanceador / orquestrador.
+    - Banco fora: 503 (a API não serve nada sem ele).
+    - Fila (Redis ou worker) fora: 200 "degradado" — o sistema funciona, só a importação de planilhas
+      não; derrubar a API inteira por isso seria pior. O vigia transforma isso em alerta.
+    """
     try:
         with engine.connect() as conexao:
             conexao.execute(text("SELECT 1"))
     except Exception:
         logger.exception("Health check: banco indisponível")
         return JSONResponse({"status": "erro", "banco": "indisponivel"}, status_code=503)
-    return JSONResponse({"status": "ok", "banco": "ok"})
+    situacao_fila = _situacao_da_fila()
+    return JSONResponse({"status": "ok" if situacao_fila in ("ok", "sincrona") else "degradado",
+                         "banco": "ok", "fila": situacao_fila})
+
+
+def _situacao_da_fila() -> str:
+    if settings.fila_sincrona:
+        return "sincrona"  # processa dentro da API: não há worker para conferir
+    from rq import Worker
+
+    from app import fila
+
+    try:
+        conexao = fila.conexao()
+        conexao.ping()
+        return "ok" if Worker.count(connection=conexao) > 0 else "sem_worker"
+    except Exception:  # Redis fora do ar / URL errada: o detalhe vai para o log do vigia
+        return "indisponivel"
 
 
 app.include_router(auth.router)

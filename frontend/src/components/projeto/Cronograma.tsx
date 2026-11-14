@@ -214,7 +214,7 @@ function CartaoFase({ projetoId, fase, indice, filtroPilar, indicadores, podeEdi
         </CardDescription>
         {podeEditar && (
           <CardAction>
-            <Button size="sm" variant="outline" onClick={aoCriar}>
+            <Button size="sm" variant="outline" onClick={aoCriar} aria-label={`Nova tarefa em ${fase.titulo}`}>
               <Plus /> Tarefa
             </Button>
           </CardAction>
