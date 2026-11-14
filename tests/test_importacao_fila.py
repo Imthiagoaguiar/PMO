@@ -5,7 +5,6 @@ Nos testes, FILA_SINCRONA=true (fakeredis): o job roda dentro da própria requis
 "fila de verdade" trocam para uma fila assíncrona no fakeredis e rodam um worker RQ em modo burst.
 """
 
-import io
 import time
 
 import fakeredis

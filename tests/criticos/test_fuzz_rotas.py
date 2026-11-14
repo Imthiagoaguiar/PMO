@@ -17,7 +17,7 @@ from app.models import PapelUsuario
 IDS_ABSURDOS = [0, -1, 2**31, 2**63, 10**30]
 VALORES_ABSURDOS: List[Any] = [
     None, "", " ", "x" * 20_000, -1, 0, 2**31, 2**63, 10**30, 1.5, True, [], {}, [1, 2], {"a": 1},
-    "‮​", "2026-02-30", "9999-12-31", "0000-00-00", "NaN", "Infinity", "-0", "1e999",
+    "\u202e\u200b", "2026-02-30", "9999-12-31", "0000-00-00", "NaN", "Infinity", "-0", "1e999",
     "<script>alert(1)</script>", "' OR 1=1 --",
 ]
 QUERIES_ABSURDAS = ["limite=0", "limite=-1", "limite=99999999999999999999", "offset=-1",

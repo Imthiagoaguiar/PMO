@@ -20,6 +20,19 @@ class Settings(BaseSettings):
     # Log do worker da fila (python -m app.trabalhador), também lido pelo vigia.
     log_arquivo_trabalhador: Optional[str] = "logs/trabalhador.log"
 
+    # ---------- Backup (python -m app.backup) ----------
+    # Pasta dos backups (vazio = backup desligado). NÃO é apagada pela limpeza do disco.
+    backup_dir: Optional[str] = "backups"
+    backup_retencao: int = Field(14, ge=1, le=365, description="Quantos backups manter")
+    # Cópia em OUTRO disco/pasta sincronizada (um backup no mesmo disco do banco não protege contra o disco morrer).
+    backup_copia_dir: Optional[str] = None
+    # Conexão que pode criar bancos, só para o teste de restauração (o usuário do app, de propósito, não pode).
+    backup_admin_url: Optional[str] = None
+    backup_hora: str = Field("02:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    backup_max_horas: int = Field(26, ge=1, description="O vigia avisa se o último backup for mais velho que isso")
+    pg_bin_dir: Optional[str] = None
+    log_arquivo_backup: Optional[str] = "logs/backup.log"
+
     # ---------- Limpeza do disco (python -m app.limpeza) ----------
     # Abaixo deste espaço livre, a limpeza apaga o que é recriável (logs antigos, caches, registros velhos).
     limpeza_min_gb: float = Field(10, ge=1, le=10_000)
@@ -51,6 +64,7 @@ class Settings(BaseSettings):
     # Origens do front React autorizadas (JSON no .env: CORS_ORIGENS=["https://pmo.empresa.com"]).
     cors_origens: List[str] = ["http://localhost:5173"]
     cookie_secure: bool = True
+    cookie_path: str = Field("/auth", pattern=r"^/[A-Za-z0-9/_-]*auth$")
 
     # Bloqueio em duas camadas (a resposta é sempre a mesma: não revela se o e-mail existe):
     # - e-mail + IP: barra quem chuta senhas de um lugar, sem travar o dono da conta em outro;

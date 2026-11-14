@@ -4,3 +4,6 @@ pypdf>=6.1,<7  # os testes leem o texto do PDF gerado
 fakeredis>=2.20,<3  # fila sem Redis nos testes (e com FILA_SINCRONA=true)
 pyflakes>=3.0  # python -m pyflakes app tests: nomes não definidos, imports sobrando
 pip-audit>=2.7  # python -m pip_audit: verifica CVEs nas dependências
+ruff>=0.6  # lint do back-end (regras em ruff.toml), roda no CI
+bandit>=1.7  # análise de segurança do código, roda no CI
+coverage>=7.0  # cobertura dos testes

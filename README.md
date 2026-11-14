@@ -235,6 +235,52 @@ Sem a variável, a integração fica desligada. Detalhes em `.env.example`.
 - Requisições limitadas a 1 MB (upload de planilha: 5 MB), inclusive envios em partes.
 - Verifique CVEs nas dependências: `python -m pip_audit` e `cd frontend && npm audit`.
 
+## Backup do banco
+
+```bash
+python -m app.backup                         # um backup agora (backups/pmo-AAAAMMDD-HHMMSS.dump)
+python -m app.backup --testar-restauracao    # e restaura num banco temporário para conferir
+python -m app.backup --listar
+scripts/instalar-backup.sh                   # macOS: todo dia às 02:00, com teste de restauração
+```
+
+- **Como é feito:** `pg_dump` em formato compactado. O arquivo só vale depois de conferido, fica legível
+  só pelo dono e os 14 mais recentes são mantidos (`BACKUP_RETENCAO`).
+- **Cópia fora do disco:** um backup no mesmo disco do banco não sobrevive ao disco. Configure
+  `BACKUP_COPIA_DIR` com outro disco ou uma pasta sincronizada com a nuvem.
+- **Vigia:** avisa se o último backup tiver mais de 26 h ou se não houver nenhum. A limpeza do disco
+  **nunca** apaga backups.
+- **Restaurar de verdade** (substitui os dados; pare a API antes):
+  `pg_restore --clean --if-exists --no-owner -d "<banco>" backups/pmo-AAAAMMDD-HHMMSS.dump`
+
+## Produção (servidor com Docker)
+
+Tudo sobe com um comando: Postgres, Redis, API, worker da fila, vigia, backup diário e o proxy Caddy,
+que cuida do **HTTPS automático** (Let's Encrypt).
+
+```bash
+cp deploy/.env.producao.exemplo deploy/.env.producao    # preencha: DOMINIO, senhas e chaves
+docker compose --env-file deploy/.env.producao -f deploy/docker-compose.yml up -d --build
+docker compose --env-file deploy/.env.producao -f deploy/docker-compose.yml exec api \
+  python -m app.cli criar-admin --email voce@empresa.com.br --nome "Seu Nome"
+```
+
+- **Pré-requisitos:** o DNS de `DOMINIO` aponta para o servidor, e as portas 80 e 443 estão abertas.
+- **Endereços:** o front fica em `https://DOMINIO` e a API em `https://DOMINIO/api`. Por isso
+  `COOKIE_PATH=/api/auth` (já está no exemplo).
+- **Atualizar:** `git pull` e o mesmo `up -d --build`. As migrations rodam sozinhas antes da API subir.
+- **Volumes que guardam dados:** `pgdata` (banco), `backups`, `caddy_data` (certificados). Não apague.
+- **O CI confere o deploy:** a cada push, ele constrói as imagens, sobe tudo com HTTPS local e testa
+  login, cookie, worker, vigia e backup.
+
+## CI
+
+`.github/workflows/ci.yml` roda a cada push e pull request:
+- **Back-end:** ruff, bandit, pip-audit, testes no SQLite (cobertura mínima de 85%) e no Postgres
+  (incluindo concorrência e backup), e todas as migrations descendo e subindo do zero.
+- **Front-end:** tipos, build e npm audit.
+- **Deploy:** imagens Docker e subida completa.
+
 ## Manutenção
 
 ### Limpeza do disco

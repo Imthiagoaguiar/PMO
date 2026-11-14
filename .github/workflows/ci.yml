@@ -1,0 +1,141 @@
+# CI: a cada push e pull request, o projeto inteiro é conferido antes de ir para a main.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  back-end:
+    name: Back-end (lint, segurança, testes no SQLite e no Postgres, migrations)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: pmo_testes
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SECRET_KEY: chave-somente-para-o-ci-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      PG_BIN_DIR: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Cliente do Postgres 17 (pg_dump/pg_restore para os testes de backup)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+      - run: pip install -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: ruff check app tests
+      - name: Segurança do código (bandit)
+        run: bandit -r app -ll -q
+      - name: Vulnerabilidades nas dependências (pip-audit)
+        run: pip-audit -r requirements.txt
+      - name: Testes no SQLite (com cobertura)
+        run: coverage run --source=app -m pytest -q && coverage report --fail-under=85
+      - name: Testes no Postgres (inclui concorrência e backup)
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://ci:ci@localhost:5432/pmo_testes
+        run: pytest -q
+      - name: Migrations aplicam do zero e batem com os modelos
+        env:
+          DATABASE_URL: postgresql+psycopg2://ci:ci@localhost:5432/pmo_migrations
+        run: |
+          PGPASSWORD=ci createdb -h localhost -U ci pmo_migrations
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
+          alembic upgrade head
+
+  front-end:
+    name: Front-end (tipos, build, dependências)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Vulnerabilidades nas dependências (npm audit)
+        run: npm audit --omit=dev --audit-level=high
+
+  deploy:
+    name: Deploy (imagens Docker + subida completa com HTTPS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [back-end, front-end]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configuração de teste (DOMINIO=localhost => certificado local do Caddy)
+        run: |
+          cp deploy/.env.producao.exemplo deploy/.env.producao
+          sed -i "s|^DOMINIO=.*|DOMINIO=localhost|; s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 16)|" deploy/.env.producao
+          sed -i "s|^SECRET_KEY=.*|SECRET_KEY=$(openssl rand -hex 40)|; s|^CORS_ORIGENS=.*|CORS_ORIGENS=[\"https://localhost\"]|" deploy/.env.producao
+          echo "CHAVE_2FA=$(python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')" >> deploy/.env.producao
+          sed -i "/^CHAVE_2FA=$/d" deploy/.env.producao
+      - name: Construir e subir tudo
+        run: docker compose --env-file deploy/.env.producao -f deploy/docker-compose.yml up -d --build
+      - name: Esperar a API ficar saudável atrás do proxy
+        run: |
+          for i in $(seq 1 60); do
+            curl -skf https://localhost/api/saude && exit 0
+            sleep 3
+          done
+          docker compose --env-file deploy/.env.producao -f deploy/docker-compose.yml logs --tail 80
+          exit 1
+      - name: Conferir proxy, front, cabeçalhos e login com cookie em /api/auth
+        run: |
+          set -e
+          C="docker compose --env-file deploy/.env.producao -f deploy/docker-compose.yml"
+          curl -sk https://localhost/ | grep -q '<div id="root">'
+          curl -sk https://localhost/projetos/123 | grep -q '<div id="root">'   # rota do React volta o index.html
+          curl -skI https://localhost/ | grep -qi "content-security-policy: default-src 'self'"
+          curl -skI https://localhost/ | grep -qi "strict-transport-security"
+          $C exec -T api python -c "
+          from app.database import SessionLocal
+          from app.models import PapelUsuario, Usuario
+          from app.security import gerar_hash_senha
+          with SessionLocal() as db:
+              db.add(Usuario(email='ci@exemplo.com', nome='CI', senha_hash=gerar_hash_senha('Ponte-Azul-Gaveta-2919'), papel=PapelUsuario.GERENTE)); db.commit()
+          "
+          curl -sk -c cookies.txt -X POST https://localhost/api/auth/login -d 'username=ci@exemplo.com&password=Ponte-Azul-Gaveta-2919' | grep -q access_token
+          grep -q "/api/auth" cookies.txt                                        # cookie no caminho certo
+          curl -sk -b cookies.txt -X POST https://localhost/api/auth/refresh | grep -q access_token   # e funciona
+      - name: Worker, vigia e backup rodaram
+        run: |
+          C="docker compose --env-file deploy/.env.producao -f deploy/docker-compose.yml"
+          sleep 15
+          $C logs trabalhador | grep -q "Listening on importacoes"
+          $C logs vigia | grep -q "rodada .* concluída"
+          $C logs backup | grep -q "Restauração conferida"
+      - name: Logs (se falhar)
+        if: failure()
+        run: docker compose --env-file deploy/.env.producao -f deploy/docker-compose.yml logs --tail 100

@@ -45,6 +45,7 @@ def executar(db: Session, coletor: Union[ColetorDeLog, List[ColetorDeLog], None]
         "higiene": _seguro(db, "higiene", lambda: sondas.higiene(db, iniciada), {"refresh_tokens_para_limpar": 0, "admins_sem_2fa": 0}),
         "fila": _seguro(db, "fila", lambda: sondas.fila_de_importacao(db, iniciada, janela_inicio),
                         {"redis_ok": None, "paradas_na_fila": 0, "travadas_processando": 0, "falhas_internas_na_janela": 0}),
+        "backup": _seguro(db, "backup", sondas.backup, {"configurado": None}),
         "recursos": _seguro(db, "recursos", lambda: sondas.recursos(settings.log_arquivo), {"disco_livre_percentual": 100.0}),
     }
     for c in coletores:  # zera os contadores: cada rodada mostra o que aconteceu nela

@@ -18,6 +18,7 @@ O que é garantido:
 
 import asyncio
 import threading
+import time
 from functools import wraps
 from typing import Any, Callable, Dict, List
 
@@ -27,11 +28,9 @@ import pytest
 from sqlalchemy import select
 
 from app import auditoria, dois_fatores, idempotencia, services
-from app.config import settings
-from app.cripto import decifrar
 from app.database import engine
 from app.main import app
-from app.models import Auditoria, Fase, Importacao, Pilar, PapelUsuario, Projeto, ProjetoMembro, RefreshToken, Tarefa, Usuario
+from app.models import Auditoria, Fase, Importacao, Pilar, Projeto, ProjetoMembro, RefreshToken, Tarefa, Usuario
 from app.routers import auth as rotas_auth
 from app.routers import pilares as pilares_rotas
 from tests.conftest import SENHA
@@ -189,15 +188,21 @@ def test_adicionar_o_mesmo_membro_cinco_vezes(gerente, projeto, criar_usuario, d
 
 
 @pytest.fixture
-def com_2fa(client, criar_usuario, login, db) -> Dict:
-    """Usuário com 2FA ativo; devolve o segredo e os códigos de recuperação."""
+def com_2fa(client, criar_usuario, login, db, monkeypatch) -> Dict:
+    """
+    Usuário com 2FA ativo; devolve o segredo, o código "da vez" e os de recuperação.
+    O relógio do 2FA fica PARADO no meio de uma janela de 30 s: com o relógio real, se a janela
+    virasse no meio do teste, o código deixaria de valer e o teste falharia por acaso.
+    """
+    agora = (int(time.time()) // 30) * 30 + 15
+    monkeypatch.setattr(dois_fatores.time, "time", lambda: agora)
     criar_usuario("dois@empresa.com.br")
     h = login("dois@empresa.com.br")
     segredo = client.post("/auth/2fa/iniciar", json={"senha": SENHA}, headers=h).json()["segredo"]
-    passo = pyotp.TOTP(segredo).timecode(__import__("datetime").datetime.now()) - 1  # código anterior
-    codigos = client.post("/auth/2fa/ativar", json={"codigo": pyotp.TOTP(segredo).generate_otp(passo)},
+    totp = pyotp.TOTP(segredo)
+    codigos = client.post("/auth/2fa/ativar", json={"codigo": totp.at(agora - 30)},  # a janela anterior
                           headers=h).json()["codigos_recuperacao"]
-    return {"segredo": segredo, "codigos": codigos}
+    return {"segredo": segredo, "codigo_atual": totp.at(agora), "codigos": codigos}
 
 
 def _desafio(client) -> str:
@@ -207,7 +212,7 @@ def _desafio(client) -> str:
 
 def test_mesmo_codigo_do_app_cinco_vezes_ao_mesmo_tempo(client, com_2fa, db, monkeypatch):
     desafios = [_desafio(client) for _ in range(N)]
-    codigo = pyotp.TOTP(com_2fa["segredo"]).now()
+    codigo = com_2fa["codigo_atual"]
     sincronizar(monkeypatch, dois_fatores, "verificar_codigo")
     respostas = simultaneas([
         (lambda d: lambda c: c.post("/auth/login/2fa", json={"desafio": d, "codigo": codigo}))(d) for d in desafios

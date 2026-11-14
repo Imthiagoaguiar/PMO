@@ -59,7 +59,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 COOKIE_REFRESH = "pmo_refresh"
-COOKIE_PATH = "/auth"  # o navegador só envia o cookie para as rotas de /auth
+# O navegador só envia o cookie para as rotas de /auth. Atrás de um proxy que põe a API em /api
+# (deploy/Caddyfile), o caminho visto pelo navegador é /api/auth: COOKIE_PATH=/api/auth.
+COOKIE_PATH = settings.cookie_path
 MENSAGEM_FALHA_LOGIN = "E-mail ou senha inválidos. Após várias tentativas, o acesso fica bloqueado por alguns minutos."
 
 

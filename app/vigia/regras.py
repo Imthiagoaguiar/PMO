@@ -85,6 +85,22 @@ def avaliar(s: Dict[str, Any]) -> List[Dict[str, Any]]:
             ["Descubra se foi alteração manual no banco ou um caminho da API sem validação"],
         ))
 
+    copia = s.get("backup") or {}
+    if copia.get("configurado"):
+        horas = copia.get("horas_desde_o_ultimo")
+        if horas is None:
+            achados.append(_achado("sem_backup", "Nenhum backup do banco encontrado", "alta",
+                                   ["sem backup, um disco que falhe perde todos os projetos"],
+                                   ["Rode `python -m app.backup` e agende (scripts/instalar-backup.sh)"]))
+        elif horas > settings.backup_max_horas:
+            achados.append(_achado("backup_atrasado", f"Último backup tem {horas:.0f} h", "alta",
+                                   [f"arquivo: {copia.get('ultimo')}", f"o limite é {settings.backup_max_horas} h"],
+                                   ["O agendamento parou? Veja logs/backup.log", "Rode `python -m app.backup` agora"]))
+        if not copia.get("copia_externa"):
+            achados.append(_achado("backup_so_local", "Os backups ficam só no mesmo disco do banco", "baixa",
+                                   ["se o disco morrer, o banco e os backups se perdem juntos"],
+                                   ["Configure BACKUP_COPIA_DIR com outro disco ou uma pasta sincronizada com a nuvem"]))
+
     fila = s.get("fila") or {}
     if fila.get("redis_ok") is False:
         achados.append(_achado("fila_fora_do_ar", "Redis inacessível: a importação de planilhas não funciona", "alta",

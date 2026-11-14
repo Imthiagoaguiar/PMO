@@ -1,7 +1,7 @@
 """Pilares: frentes de trabalho do projeto (TI, Suprimentos, CAPEX, Pessoas...)."""
 
 import io
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import openpyxl
 import pandas as pd

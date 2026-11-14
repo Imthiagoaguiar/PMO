@@ -1,6 +1,8 @@
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
+
+from app import tempo
 
 from app.models import PapelUsuario
 
@@ -131,7 +133,8 @@ def test_editar_e_excluir_projeto(client, projeto):
 
 def test_indicadores(client, projeto):
     p, h = projeto
-    ontem = (date.today() - timedelta(days=1)).isoformat()
+    # O "hoje" do app (São Paulo), não o da máquina: no CI (UTC) os dois divergem entre 21h e 0h de Brasília.
+    ontem = (tempo.hoje() - timedelta(days=1)).isoformat()
     _criar_tarefa(client, p, h["gerente"], "Iniciação", percentual_conclusao=100, data_inicio="2026-01-05", data_fim="2026-01-10")
     _criar_tarefa(client, p, h["gerente"], "Planejamento", percentual_conclusao=40, data_fim=ontem)  # atrasada
     _criar_tarefa(client, p, h["gerente"], "Planejamento", percentual_conclusao=0, data_fim="2099-12-31")

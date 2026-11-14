@@ -1,0 +1,115 @@
+# Produção em um servidor: docker compose --env-file deploy/.env.producao -f deploy/docker-compose.yml up -d
+# Veja "Produção" no README.
+name: pmo
+
+x-backend: &backend
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.api
+  image: pmo-api:latest
+  env_file: .env.producao
+  environment:
+    DATABASE_URL: postgresql+psycopg2://pmo:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}@db:5432/pmo
+    REDIS_URL: redis://redis:6379/0
+  volumes:
+    - logs:/app/logs
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: pmo
+      POSTGRES_USER: pmo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pmo -d pmo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migracoes:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    healthcheck: { disable: true }
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    <<: *backend
+    depends_on:
+      migracoes: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  trabalhador:
+    <<: *backend
+    command: ["python", "-m", "app.trabalhador"]
+    healthcheck: { disable: true }
+    depends_on:
+      migracoes: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  vigia:
+    <<: *backend
+    command: ["python", "-m", "app.vigia"]
+    healthcheck: { disable: true }
+    environment:
+      DATABASE_URL: postgresql+psycopg2://pmo:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}@db:5432/pmo
+      REDIS_URL: redis://redis:6379/0
+      VIGIA_API_URL: http://api:8000
+    volumes:
+      - logs:/app/logs
+      - backups:/app/backups:ro  # o vigia confere se o backup está em dia
+    depends_on:
+      api: { condition: service_healthy }
+
+  backup:
+    <<: *backend
+    # Todo dia em BACKUP_HORA: pg_dump + restauração conferida num banco temporário.
+    command: ["python", "-m", "app.backup", "--agendado", "--testar-restauracao"]
+    healthcheck: { disable: true }
+    volumes:
+      - logs:/app/logs
+      - backups:/app/backups
+    depends_on:
+      migracoes: { condition: service_completed_successfully }
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    image: pmo-web:latest
+    environment:
+      DOMINIO: ${DOMINIO:?defina DOMINIO}
+      API_UPSTREAM: api:8000
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - caddy_data:/data  # certificados HTTPS: não apague
+      - caddy_config:/config
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  logs:
+  backups:
+  caddy_data:
+  caddy_config:

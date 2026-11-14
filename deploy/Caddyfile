@@ -1,0 +1,34 @@
+# Proxy de produção do PMO.
+# DOMINIO: o endereço público (ex.: pmo.suaempresa.com.br) => certificado HTTPS automático (Let's Encrypt).
+#          "localhost" => certificado local (testes).
+# API_UPSTREAM: onde a API escuta (no docker-compose: api:8000). SITE_ROOT: o front compilado.
+{$DOMINIO:localhost} {
+	encode zstd gzip
+
+	# /api/* -> API, sem o prefixo (/api/projetos -> /projetos).
+	handle_path /api/* {
+		reverse_proxy {$API_UPSTREAM:api:8000}
+	}
+
+	# O resto é o front: arquivo existente ou index.html (rotas do React).
+	handle {
+		root * {$SITE_ROOT:/srv}
+		try_files {path} /index.html
+		file_server
+	}
+
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		# O front não carrega nada de fora. style 'unsafe-inline': os componentes (Radix) usam style="".
+		# img data:: o QR code do 2FA é gerado no navegador como imagem data:.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		-Server
+	}
+}

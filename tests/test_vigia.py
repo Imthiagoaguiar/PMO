@@ -257,7 +257,7 @@ def test_integridade_limpa_quando_a_api_e_usada(projeto):
 
 
 def test_integridade_acha_dados_corrompidos_por_fora_da_api(projeto):
-    p, q, t = projeto["p"], projeto["q"], projeto["tarefa"]
+    q, t = projeto["q"], projeto["tarefa"]
     with SessionLocal() as db:
         db.execute(text("DELETE FROM fases WHERE id = :f"), {"f": q["fases"][4]["id"]})
         db.execute(text("UPDATE tarefas SET pilar_id = :pi, responsavel_id = :u WHERE id = :t"),

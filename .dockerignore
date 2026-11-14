@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/.pytest_cache
+.ruff_cache
+logs
+backups
+tests
+deploy/.env.producao
+frontend/node_modules
+frontend/dist
+frontend/tsconfig.tsbuildinfo

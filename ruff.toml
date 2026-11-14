@@ -1,0 +1,21 @@
+# Lint do back-end (roda no CI). Só regras que apontam ERRO de verdade, não estilo:
+#   F   — pyflakes: nome não definido, import sobrando, variável não usada
+#   E9  — erro de sintaxe / de leitura do arquivo
+#   PLE — erros do pylint (ex.: argumento repetido, __init__ que devolve valor)
+#   B   — armadilhas comuns (default mutável, except que engole tudo...)
+target-version = "py311"
+line-length = 130
+extend-exclude = ["migrations/versions"]
+
+[lint]
+select = ["F", "E9", "PLE", "B"]
+ignore = [
+  "B008",  # Depends(...) como default é o padrão do FastAPI
+  "B904",  # raise ... from err: estilo; os HTTPException já não expõem a causa
+  "B905",  # zip(strict=): todos os usos atuais zipam listas do mesmo tamanho
+]
+
+[lint.per-file-ignores]
+# As requisições simultâneas são montadas com (lambda i: lambda c: ...)(i): cada uma já captura o
+# próprio valor. O B023 não enxerga esse padrão.
+"tests/criticos/test_concorrencia.py" = ["B023"]

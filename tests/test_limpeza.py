@@ -4,7 +4,6 @@ import json
 import logging
 import os
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 
@@ -98,7 +97,7 @@ def test_esvaziar_recusa_pasta_fora_da_lista(tmp_path):
 
 def test_caches_de_desenvolvimento(tmp_path, monkeypatch, pouco_espaco):
     pastas = {nome: tmp_path / nome for nome in ("pip", "npm", "Homebrew")}
-    for nome, pasta in pastas.items():
+    for pasta in pastas.values():
         (pasta / "sub").mkdir(parents=True)
         arquivo = pasta / "sub" / "pacote.bin"
         arquivo.touch()

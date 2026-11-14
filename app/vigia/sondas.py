@@ -60,7 +60,7 @@ VERIFICACOES_DE_INTEGRIDADE = [
      "SELECT p.id FROM projetos p WHERE NOT EXISTS "
      "(SELECT 1 FROM projeto_membros m WHERE m.projeto_id = p.id AND m.usuario_id = p.dono_id)"),
     ("pilares_demais", f"Projetos com mais de {MAX_PILARES} pilares",
-     f"SELECT projeto_id FROM pilares GROUP BY projeto_id HAVING COUNT(*) > {MAX_PILARES}"),
+     "SELECT projeto_id FROM pilares GROUP BY projeto_id HAVING COUNT(*) > :maximo"),
     ("datas_invertidas", "Tarefas com término antes do início",
      "SELECT id FROM tarefas WHERE data_inicio IS NOT NULL AND data_fim IS NOT NULL AND data_fim < data_inicio"),
     ("percentual_fora_da_faixa", "Tarefas com % fora de 0 a 100",
@@ -72,7 +72,7 @@ def integridade(db: Session) -> List[Dict[str, Any]]:
     problemas = []
     for codigo, descricao, sql in VERIFICACOES_DE_INTEGRIDADE:
         try:
-            ids = [linha[0] for linha in db.execute(text(sql + " LIMIT 51"))]
+            ids = [linha[0] for linha in db.execute(text(sql + " LIMIT 51"), {"maximo": MAX_PILARES})]
         except Exception as exc:
             db.rollback()
             problemas.append({"codigo": codigo, "descricao": descricao, "erro": type(exc).__name__})
@@ -151,3 +151,20 @@ def fila_de_importacao(db: Session, agora: datetime, desde: datetime) -> Dict[st
                                           Importacao.mensagem == FALHA_INTERNA),
     )
     return estado
+
+
+def backup() -> Dict[str, Any]:
+    """Idade do último backup (o vigia cobra um por dia)."""
+    from app import backup as modulo_backup
+
+    if not settings.backup_dir:
+        return {"configurado": False}
+    pasta = Path(settings.backup_dir)
+    backups = modulo_backup.listar(pasta)
+    idade = modulo_backup.idade_do_ultimo(pasta)
+    return {
+        "configurado": True, "quantidade": len(backups),
+        "ultimo": backups[-1].name if backups else None,
+        "horas_desde_o_ultimo": round(idade.total_seconds() / 3600, 1) if idade else None,
+        "copia_externa": bool(settings.backup_copia_dir),
+    }
