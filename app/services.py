@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 import openpyxl
+from openpyxl.cell import WriteOnlyCell
 import pandas as pd
 from pydantic import ValidationError
 from sqlalchemy import and_, case, func, insert, select, update
@@ -457,49 +458,70 @@ def tarefas_por_fase(db: Session, projeto: Projeto, limite: int = LIMITE_TAREFAS
 COLUNAS_EXPORTACAO = ["Fase", "Descrição", "Data Início", "Data Fim", "Responsável", "% Conclusão", "Pilar"]
 # Texto que começa com estes caracteres pode ser interpretado como fórmula (Formula Injection).
 CARACTERES_DE_FORMULA = ("=", "+", "-", "@", "\t", "\r")
-COLUNAS_DE_TEXTO = ("B", "E", "G")  # Descrição, Responsável e Pilar: texto livre digitado pelas pessoas
 
 
-def _forcar_texto(celula: Any) -> None:
+LARGURAS_EXPORTACAO = (16, 60, 14, 14, 28, 14, 18)
+LOTE_EXPORTACAO = 5000  # linhas lidas do banco por vez: a memória não cresce com o tamanho do projeto
+
+
+def _texto_seguro(planilha: Any, valor: Optional[str]) -> Any:
     """
-    Grava a célula como TEXTO, sem alterar o conteúdo: o Excel mostra "=SOMA(A1)" em vez de
-    calcular, e "- revisar contrato" volta igual na reimportação (o antigo prefixo ' sujava o texto).
-    quotePrefix mantém a célula como texto mesmo se a pessoa a editar no Excel.
+    Grava como TEXTO, sem alterar o conteúdo, o que poderia virar fórmula (Formula Injection):
+    o Excel mostra "=SOMA(A1)" em vez de calcular, e "- revisar contrato" volta igual na
+    reimportação (o antigo prefixo ' sujava o texto). quotePrefix mantém a célula como texto
+    mesmo se a pessoa a editar no Excel. Texto comum vai direto, sem custo de célula estilizada.
     """
-    if isinstance(celula.value, str) and celula.value.startswith(CARACTERES_DE_FORMULA):
-        celula.data_type = "s"
-        celula.quotePrefix = True
+    if not (isinstance(valor, str) and valor.startswith(CARACTERES_DE_FORMULA)):
+        return valor
+    celula = WriteOnlyCell(planilha, value=valor)
+    celula.data_type = "s"
+    celula.quotePrefix = True
+    return celula
 
 
-def exportar_planilha(projeto: Projeto) -> bytes:
-    """Gera um .xlsx no mesmo formato aceito pela importação (dá para editar e reimportar)."""
-    linhas = [
-        {
-            "Fase": fase.titulo,
-            "Descrição": tarefa.descricao,
-            "Data Início": tarefa.data_inicio,
-            "Data Fim": tarefa.data_fim,
-            "Responsável": tarefa.responsavel_usuario.nome if tarefa.responsavel_usuario else tarefa.responsavel,
-            "% Conclusão": tarefa.percentual_conclusao,
-            "Pilar": tarefa.pilar.nome if tarefa.pilar else None,
-        }
-        for fase in projeto.fases
-        for tarefa in fase.tarefas
-    ]
-    df = pd.DataFrame(linhas, columns=COLUNAS_EXPORTACAO)
+def _data(planilha: Any, valor: Optional[date]) -> Any:
+    if valor is None:
+        return None
+    celula = WriteOnlyCell(planilha, value=valor)
+    celula.number_format = "DD/MM/YYYY"
+    return celula
+
+
+def exportar_planilha(db: Session, projeto: Projeto) -> bytes:
+    """
+    Gera um .xlsx no mesmo formato aceito pela importação (dá para editar e reimportar).
+
+    Feito para projetos grandes (100 mil tarefas): uma consulta só de colunas, lida em lotes
+    (sem montar um objeto do ORM por tarefa) e a planilha no modo de escrita contínua do
+    openpyxl, que grava linha a linha em vez de guardar a planilha inteira na memória.
+    """
+    consulta = (
+        select(
+            Fase.titulo, Tarefa.descricao, Tarefa.data_inicio, Tarefa.data_fim,
+            func.coalesce(Usuario.nome, Tarefa.responsavel), Tarefa.percentual_conclusao, Pilar.nome,
+        )
+        .join(Fase, Tarefa.fase_id == Fase.id)
+        .outerjoin(Usuario, Tarefa.responsavel_id == Usuario.id)
+        .outerjoin(Pilar, Tarefa.pilar_id == Pilar.id)
+        .where(Fase.projeto_id == projeto.id)
+        .order_by(Fase.ordem_sequencia, Tarefa.id)
+        .execution_options(yield_per=LOTE_EXPORTACAO)
+    )
+
+    livro = openpyxl.Workbook(write_only=True)
+    planilha = livro.create_sheet("Cronograma")
+    for letra, largura in zip("ABCDEFG", LARGURAS_EXPORTACAO):
+        planilha.column_dimensions[letra].width = largura
+    planilha.append(COLUNAS_EXPORTACAO)
+    for fase, descricao, inicio, fim, responsavel, percentual, pilar in db.execute(consulta):
+        planilha.append([
+            _texto_seguro(planilha, fase), _texto_seguro(planilha, descricao),
+            _data(planilha, inicio), _data(planilha, fim),
+            _texto_seguro(planilha, responsavel), percentual, _texto_seguro(planilha, pilar),
+        ])
 
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Cronograma")
-        planilha = writer.sheets["Cronograma"]
-        for coluna, largura in zip("ABCDEFG", (16, 60, 14, 14, 28, 14, 18)):
-            planilha.column_dimensions[coluna].width = largura
-        for coluna in ("C", "D"):
-            for celula in planilha[coluna][1:]:
-                celula.number_format = "DD/MM/YYYY"
-        for coluna in COLUNAS_DE_TEXTO:
-            for celula in planilha[coluna][1:]:
-                _forcar_texto(celula)
+    livro.save(buffer)
     return buffer.getvalue()
 
 

@@ -13,7 +13,8 @@ O que é garantido:
   coluna `versao`), sem "atualização perdida";
 - adicionar o mesmo membro 5 vezes: 1 entra, as outras 409 (e não erro 500);
 - o mesmo código do 2FA ou de recuperação usado 5 vezes ao mesmo tempo: 1 login só;
-- o mesmo refresh token renovado 5 vezes ao mesmo tempo: 1 sessão nova só.
+- o mesmo refresh token renovado 5 vezes ao mesmo tempo: 1 sessão nova só;
+- o mesmo link de redefinição de senha usado 5 vezes ao mesmo tempo: 1 senha nova só.
 """
 
 import asyncio
@@ -254,6 +255,34 @@ def test_mesmo_refresh_token_renovado_cinco_vezes_ao_mesmo_tempo(client, criar_u
     db.expire_all()
     ativos = db.scalars(select(RefreshToken).where(RefreshToken.revogado_em.is_(None))).all()
     assert len(ativos) == 1  # uma única sessão nova
+
+
+def test_mesmo_link_de_redefinicao_usado_cinco_vezes_ao_mesmo_tempo(client, criar_usuario, db, monkeypatch):
+    """
+    Todas leem a senha e a versão antigas e calculam o hash novo juntas; o UPDATE condicional
+    deixa só UMA gravar. As outras recebem 400 ("link já usado"), sem sobrescrever a senha.
+    """
+    from app.integracoes import notificacoes
+
+    enviados = []
+    monkeypatch.setattr(notificacoes, "enviar_redefinicao_senha", lambda *a: enviados.append(a))
+    criar_usuario("ana@empresa.com.br")
+    client.post("/auth/esqueci-senha", json={"email": "ana@empresa.com.br"})
+    token = enviados[0][2].split("#token=")[1]
+    senhas = [f"Ponte-Azul-Gaveta-29{i}{i}" for i in range(N)]
+    sincronizar(monkeypatch, rotas_auth, "gerar_hash_senha")
+    respostas = simultaneas([
+        (lambda senha: lambda c: c.post("/auth/redefinir-senha", json={"token": token, "nova_senha": senha}))(s)
+        for s in senhas
+    ])
+
+    assert _status(respostas) == [204] + [400] * (N - 1), [r.status_code for r in respostas]
+    vencedora = senhas[[r.status_code for r in respostas].index(204)]
+    for senha in senhas:
+        r = client.post("/auth/login", data={"username": "ana@empresa.com.br", "password": senha})
+        assert r.status_code == (200 if senha == vencedora else 401), senha
+    db.expire_all()
+    assert db.scalar(select(Usuario).where(Usuario.email == "ana@empresa.com.br")).versao_sessao == 1
 
 
 # ---------- Pilares ----------

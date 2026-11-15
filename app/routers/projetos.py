@@ -362,8 +362,8 @@ def exportar_projeto(
     usuario: Usuario = Depends(get_usuario_atual),
 ) -> Response:
     """Baixa o cronograma em .xlsx, no mesmo formato aceito por /projetos/importar."""
-    projeto = obter_projeto_visivel(db, projeto_id, usuario, carregar_tarefas=True)
-    conteudo = services.exportar_planilha(projeto)
+    projeto = obter_projeto_visivel(db, projeto_id, usuario)  # as tarefas vêm em lotes, na exportação
+    conteudo = services.exportar_planilha(db, projeto)
     auditoria.registrar(db, "projeto.exportado", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id)
     salvar(db)
     return Response(

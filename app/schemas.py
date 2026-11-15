@@ -507,6 +507,19 @@ class AlterarSenha(BaseModel):
         return self
 
 
+class EsqueciSenha(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+
+
+class RedefinirSenhaPorLink(BaseModel):
+    token: str = Field(..., min_length=1, max_length=2000)
+    nova_senha: str = Field(..., min_length=SENHA_MIN, max_length=SENHA_MAX)
+
+
+class PedidoRecebido(BaseModel):
+    mensagem: str
+
+
 class TokenResposta(BaseModel):
     access_token: str
     token_type: str = "bearer"

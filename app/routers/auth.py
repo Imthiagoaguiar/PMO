@@ -10,11 +10,12 @@ Fluxo de autenticação pensado para o front React:
 O front guarda o access token só em memória e chama /auth/refresh ao recarregar a página.
 """
 
+import hmac
 import logging
 from datetime import timedelta
 from typing import Optional, Union
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
 import jwt
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, update
@@ -24,8 +25,19 @@ from app import auditoria, dois_fatores, senhas, services
 from app.config import settings
 from app.database import get_db
 from app.deps import get_usuario_sessao
+from app.integracoes import notificacoes
 from app.models import PapelUsuario, ProvedorAuth, RefreshToken, Usuario
-from app.rate_limit import falhas_login, ip_de, limite_config_2fa, limite_login, limite_login_2fa, limite_refresh
+from app.rate_limit import (
+    falhas_login,
+    ip_de,
+    limite_config_2fa,
+    limite_esqueci_senha,
+    limite_esqueci_senha_email,
+    limite_login,
+    limite_login_2fa,
+    limite_redefinir_senha,
+    limite_refresh,
+)
 from app.schemas import (
     SENHA_MAX,
     AlterarSenha,
@@ -35,7 +47,10 @@ from app.schemas import (
     ConfirmarSenha,
     ConfirmarSenhaECodigo,
     DesafioDoisFatores,
+    EsqueciSenha,
     LoginDoisFatores,
+    PedidoRecebido,
+    RedefinirSenhaPorLink,
     StatusDoisFatores,
     TokenResposta,
     UsuarioRead,
@@ -46,10 +61,13 @@ from app.security import (
     como_utc,
     criar_access_token,
     criar_desafio_2fa,
+    criar_token_redefinicao,
     decodificar_desafio_2fa,
+    decodificar_token_redefinicao,
     gerar_hash_senha,
     gerar_refresh_token,
     hash_token,
+    impressao_da_senha,
     precisa_rehash,
     verificar_senha,
 )
@@ -351,6 +369,109 @@ def alterar_senha(
     services.derrubar_sessoes(db, usuario)
     auditoria.registrar(db, "auth.senha_alterada", "usuario", usuario.id, usuario=usuario)
     db.commit()
+    _apagar_cookie(response)
+
+
+# ---------- Esqueci minha senha (link por e-mail) ----------
+
+MENSAGEM_PEDIDO_RECEBIDO = (
+    "Se o e-mail estiver cadastrado, enviamos um link para criar uma nova senha. "
+    "Confira a caixa de entrada e o spam."
+)
+MENSAGEM_LINK_INVALIDO = "Link inválido, expirado ou já usado. Peça um novo em \"Esqueci minha senha\"."
+
+
+@router.post(
+    "/esqueci-senha",
+    response_model=PedidoRecebido,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(limite_esqueci_senha)],
+)
+def esqueci_senha(payload: EsqueciSenha, tarefas: BackgroundTasks, db: Session = Depends(get_db)) -> PedidoRecebido:
+    """
+    Manda o link de redefinição. A resposta é SEMPRE a mesma (e sai antes do e-mail): por fora não
+    dá para saber se o e-mail existe. Contas desativadas ou que entram pelo Clerk não recebem nada.
+    """
+    email = payload.email.strip().lower()
+    try:
+        limite_esqueci_senha_email.verificar(("email", email))
+    except HTTPException:
+        # Acima de 3 pedidos por hora para o mesmo e-mail: não manda mais nada, sem avisar quem pediu.
+        auditoria.registrar(db, "auth.redefinicao_barrada", "usuario", None, detalhes={"email": email})
+        db.commit()
+        return PedidoRecebido(mensagem=MENSAGEM_PEDIDO_RECEBIDO)
+
+    usuario = db.scalar(select(Usuario).where(Usuario.email == email))
+    if usuario and usuario.ativo and usuario.provedor_auth == ProvedorAuth.LOCAL:
+        token = criar_token_redefinicao(usuario.id, usuario.versao_sessao, usuario.senha_hash)
+        # No fragmento (#), o token não vai para logs de servidor/proxy nem para o Referer.
+        link = f"{settings.url_do_front}/redefinir-senha#token={token}"
+        tarefas.add_task(notificacoes.enviar_redefinicao_senha, usuario.email, usuario.nome, link)
+        auditoria.registrar(db, "auth.redefinicao_pedida", "usuario", usuario.id, usuario=usuario)
+    else:
+        auditoria.registrar(
+            db, "auth.redefinicao_pedida", "usuario", usuario.id if usuario else None, usuario=usuario,
+            detalhes={"email": email, "enviado": False},
+        )
+    db.commit()
+    return PedidoRecebido(mensagem=MENSAGEM_PEDIDO_RECEBIDO)
+
+
+@router.post(
+    "/redefinir-senha",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(limite_redefinir_senha)],
+)
+def redefinir_senha(payload: RedefinirSenhaPorLink, response: Response, db: Session = Depends(get_db)) -> None:
+    """
+    Troca a senha com o link do e-mail. O link vale uma vez só: a troca muda a senha e a versão
+    da sessão, e as duas estão presas ao link. Derruba todas as sessões, desbloqueia a conta e
+    zera as falhas de login desse e-mail. O 2FA continua valendo no próximo login.
+    """
+    link_invalido = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=MENSAGEM_LINK_INVALIDO)
+    try:
+        dados = decodificar_token_redefinicao(payload.token)
+    except jwt.InvalidTokenError:
+        raise link_invalido
+    usuario = db.get(Usuario, dados.usuario_id)
+    if (
+        usuario is None
+        or not usuario.ativo
+        or usuario.provedor_auth != ProvedorAuth.LOCAL
+        or usuario.versao_sessao != dados.versao_sessao
+        or not hmac.compare_digest(impressao_da_senha(usuario.senha_hash), dados.impressao_senha)
+    ):
+        raise link_invalido
+    try:
+        senhas.validar_senha(payload.nova_senha, usuario.email, usuario.nome)
+    except senhas.SenhaFraca as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    # UPDATE condicional: com dois envios do mesmo link ao mesmo tempo, só um encontra a versão
+    # e a senha antigas (o outro recebe "link já usado", sem sobrescrever a senha recém-criada).
+    trocou = db.execute(
+        update(Usuario)
+        .where(
+            Usuario.id == usuario.id,
+            Usuario.versao_sessao == dados.versao_sessao,
+            Usuario.senha_hash == usuario.senha_hash,
+        )
+        .values(
+            senha_hash=gerar_hash_senha(payload.nova_senha),
+            versao_sessao=Usuario.versao_sessao + 1,  # access tokens já emitidos param na hora
+            trocar_senha=False,
+            tentativas_falhas=0,
+            bloqueado_ate=None,
+        )
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if trocou != 1:
+        db.rollback()
+        raise link_invalido
+    services.revogar_sessoes(db, usuario.id)
+    auditoria.registrar(db, "auth.senha_redefinida", "usuario", usuario.id, usuario=usuario)
+    db.commit()
+    falhas_login.limpar(usuario.email)
     _apagar_cookie(response)
 
 

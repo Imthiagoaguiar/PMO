@@ -30,4 +30,5 @@ for _ in $(seq 1 60); do curl -sf http://localhost:8100/saude >/dev/null && brea
 curl -sf http://localhost:8100/saude >/dev/null || { cat "$TEMP/api.log"; echo "A API do E2E não subiu"; exit 1; }
 
 cd frontend
-VITE_API_URL=http://localhost:8100 npx playwright test "$@"
+# Sem Resend, em dev, o link de "Esqueci minha senha" sai no log da API: o teste o lê dali.
+E2E_API_LOG="$TEMP/api.log" VITE_API_URL=http://localhost:8100 npx playwright test "$@"

@@ -270,4 +270,9 @@ limite_ia = LimitadorTaxa("ia", max_requisicoes=5, janela_segundos=60)  # cada c
 limite_config_2fa = LimitadorTaxa("config-2fa", max_requisicoes=10, janela_segundos=60)
 limite_relatorio = LimitadorTaxa("relatorio", max_requisicoes=10, janela_segundos=60)  # PDF gasta CPU
 
+# Esqueci a senha: cada pedido manda um e-mail. Por IP (429) e por e-mail (silencioso, para a
+# tela não virar um jeito de lotar a caixa de alguém nem revelar se o e-mail existe).
+limite_esqueci_senha = LimitadorTaxa("esqueci-senha", max_requisicoes=5, janela_segundos=15 * 60)
+limite_esqueci_senha_email = LimitadorTaxa("esqueci-senha-email", max_requisicoes=3, janela_segundos=60 * 60)
+limite_redefinir_senha = LimitadorTaxa("redefinir-senha", max_requisicoes=10, janela_segundos=60)
 falhas_login = FalhasLogin()

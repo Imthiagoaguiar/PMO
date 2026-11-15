@@ -22,7 +22,9 @@ with SessionLocal() as db:
     gil = Usuario(email="gerente@e2e.com", nome="Gil Gerente", senha_hash=hash_, papel=PapelUsuario.GERENTE)
     eva = Usuario(email="editora@e2e.com", nome="Eva Editora", senha_hash=hash_, papel=PapelUsuario.MEMBRO)
     lia = Usuario(email="leitora@e2e.com", nome="Lia Leitora", senha_hash=hash_, papel=PapelUsuario.MEMBRO)
-    db.add_all([gil, eva, lia])
+    # Só para o teste de "Esqueci minha senha" (ele troca a senha dela; os outros testes não a usam).
+    rui = Usuario(email="esqueceu@e2e.com", nome="Rui Esquecido", senha_hash=hash_, papel=PapelUsuario.MEMBRO)
+    db.add_all([gil, eva, lia, rui])
     db.flush()
     projeto = services.criar_projeto_com_fases(db, gil, "Implantação ERP")
     db.flush()

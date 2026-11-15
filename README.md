@@ -8,7 +8,7 @@ MVP de PMO para projetos Waterfall.
 - Projetos com as 5 fases (Iniciação, Planejamento, Execução, Monitoramento, Encerramento), criados manualmente, por planilha (.xlsx/.csv) ou com sugestão de escopo por IA (Groq).
 - Login próprio (JWT + refresh token em cookie httpOnly) ou Clerk; papéis admin/gerente/membro e, em cada projeto, editor ou visualizador (vê, exporta e comenta).
 - Importação de planilhas de até 100 mil linhas em segundo plano (fila Redis + RQ), com progresso ao vivo.
-- Auditoria, limite de requisições, exportação para Excel, cálculo de prazos em dias úteis (Brasil API) e e-mail de projeto criado (Resend).
+- Auditoria, limite de requisições, exportação para Excel, cálculo de prazos em dias úteis (Brasil API) e e-mails de projeto criado e de redefinição de senha (Resend).
 - **Pilares** (TI, Suprimentos, CAPEX, Pessoas... e outros criados pelo editor): cada tarefa pode pertencer a um pilar;
   o andamento do pilar vem das tarefas, com farol (verde/amarelo/vermelho), texto de situação e orçado x realizado.
 - **Relatório em PDF** do projeto: resumo e indicadores, pilares, linha do tempo (Gantt), histórico e comentários recentes.
@@ -237,13 +237,19 @@ Sem a variável, a integração fica desligada. Detalhes em `.env.example`.
 |---|---|
 | `CLERK_EMISSOR` | Aceitar o token do Clerk (exige o claim `primaryEmail` no session token) |
 | `GROQ_API_KEY`, `GROQ_MODELO` | `POST /projetos/ia` |
-| `RESEND_API_KEY`, `EMAIL_REMETENTE` | E-mail ao criar projeto |
+| `RESEND_API_KEY`, `EMAIL_REMETENTE` | E-mails de projeto criado e de "Esqueci minha senha" |
+| `FRONTEND_URL` | Endereço do site nos links dos e-mails (padrão: a 1ª de `CORS_ORIGENS`; em produção, `https://`) |
+| `REDEFINICAO_SENHA_MINUTOS` | Validade do link de redefinição de senha (padrão: 30) |
 
 ## Segurança
 
 - Senhas: Argon2id; mínimo de 12 caracteres; recusa senhas previsíveis, com nome/e-mail ou vazadas (HIBP).
 - Sessão: JWT de 15 min + refresh token rotativo em cookie httpOnly; trocar a senha ou "encerrar sessões" invalida na hora até os tokens já emitidos.
 - Senha definida pelo admin (cadastro ou redefinição) obriga a troca no próximo login.
+- "Esqueci minha senha": link por e-mail, válido por 30 min e uma única vez (morre também se a senha mudar
+  por outro caminho). A resposta é igual para qualquer e-mail, no máximo 3 links por hora para o mesmo endereço.
+  Redefinir encerra todas as sessões e desbloqueia a conta; o 2FA continua valendo. Sem `RESEND_API_KEY`,
+  em desenvolvimento, o link aparece no log da API (em produção, nunca).
 - Verificação em duas etapas (TOTP, app autenticador) com 10 códigos de recuperação de uso único.
   Obrigatória para admin com login local; opcional para os demais. O segredo fica cifrado no banco
   (`CHAVE_2FA`, obrigatória em produção — não a troque depois que alguém ativar o 2FA).

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { lazy, Suspense, type ReactNode } from "react"
 import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "react-router"
 
 import { TrocaObrigatoria } from "@/components/AlterarSenha"
@@ -8,13 +8,20 @@ import { ErroDeTela } from "@/components/ErroDeTela"
 import { Layout } from "@/components/Layout"
 import { useAuth } from "@/lib/auth"
 import type { PapelUsuario } from "@/lib/tipos"
-import { Auditoria } from "@/pages/Auditoria"
-import { Vigia } from "@/pages/Vigia"
 import { Login } from "@/pages/Login"
-import { MinhasTarefas } from "@/pages/MinhasTarefas"
-import { ProjetoDetalhe } from "@/pages/ProjetoDetalhe"
-import { Projetos } from "@/pages/Projetos"
-import { Usuarios } from "@/pages/Usuarios"
+import { EsqueciSenha, RedefinirSenha } from "@/pages/RecuperarSenha"
+
+// Cada página é baixada só quando é aberta (o login não carrega o código do cronograma, do PDF...).
+const Auditoria = lazy(() => import("@/pages/Auditoria").then((m) => ({ default: m.Auditoria })))
+const Vigia = lazy(() => import("@/pages/Vigia").then((m) => ({ default: m.Vigia })))
+const MinhasTarefas = lazy(() => import("@/pages/MinhasTarefas").then((m) => ({ default: m.MinhasTarefas })))
+const ProjetoDetalhe = lazy(() => import("@/pages/ProjetoDetalhe").then((m) => ({ default: m.ProjetoDetalhe })))
+const Projetos = lazy(() => import("@/pages/Projetos").then((m) => ({ default: m.Projetos })))
+const Usuarios = lazy(() => import("@/pages/Usuarios").then((m) => ({ default: m.Usuarios })))
+
+function Pagina({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<Carregando />}>{children}</Suspense>
+}
 
 /** Só renderiza com sessão; senão manda para o login lembrando de onde veio. */
 function ComSessao({ children }: { children: ReactNode }) {
@@ -42,6 +49,9 @@ function SomentePapel({ papeis, children }: { papeis: PapelUsuario[]; children: 
 
 export const rotas = [
   { path: "/login", element: <Login />, errorElement: <ErroDeTela /> },
+  // Abertas sem sessão: quem esqueceu a senha não consegue entrar.
+  { path: "/esqueci-senha", element: <EsqueciSenha />, errorElement: <ErroDeTela /> },
+  { path: "/redefinir-senha", element: <RedefinirSenha />, errorElement: <ErroDeTela /> },
   {
     element: (
       <ComSessao>
@@ -55,12 +65,12 @@ export const rotas = [
         errorElement: <ErroDeTela />,
         children: [
           { index: true, element: <Navigate to="/projetos" replace /> },
-          { path: "/projetos", element: <Projetos /> },
-          { path: "/projetos/:id", element: <ProjetoDetalhe /> },
-          { path: "/minhas-tarefas", element: <MinhasTarefas /> },
-          { path: "/usuarios", element: <SomentePapel papeis={["admin"]}><Usuarios /></SomentePapel> },
-          { path: "/auditoria", element: <SomentePapel papeis={["admin"]}><Auditoria /></SomentePapel> },
-          { path: "/vigia", element: <SomenteVigia><Vigia /></SomenteVigia> },
+          { path: "/projetos", element: <Pagina><Projetos /></Pagina> },
+          { path: "/projetos/:id", element: <Pagina><ProjetoDetalhe /></Pagina> },
+          { path: "/minhas-tarefas", element: <Pagina><MinhasTarefas /></Pagina> },
+          { path: "/usuarios", element: <SomentePapel papeis={["admin"]}><Pagina><Usuarios /></Pagina></SomentePapel> },
+          { path: "/auditoria", element: <SomentePapel papeis={["admin"]}><Pagina><Auditoria /></Pagina></SomentePapel> },
+          { path: "/vigia", element: <SomenteVigia><Pagina><Vigia /></Pagina></SomenteVigia> },
           { path: "*", element: <Navigate to="/projetos" replace /> },
         ],
       },

@@ -1,6 +1,6 @@
 import { ShieldCheck } from "lucide-react"
 import { useState, type FormEvent } from "react"
-import { Navigate, useLocation, useNavigate } from "react-router"
+import { Link, Navigate, useLocation, useNavigate } from "react-router"
 
 import { Campo } from "@/components/comum"
 import { Button } from "@/components/ui/button"
@@ -94,6 +94,9 @@ export function Login() {
                 </Campo>
                 <Campo label="Senha" htmlFor="senha">
                   <Input id="senha" type="password" autoComplete="current-password" required value={senha} onChange={(e) => setSenha(e.target.value)} />
+                  <Link to="/esqueci-senha" state={{ email: email.trim() }} className="justify-self-end text-sm text-primary hover:underline">
+                    Esqueci minha senha
+                  </Link>
                 </Campo>
                 {alerta}
                 <Button type="submit" disabled={enviando}>

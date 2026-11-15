@@ -28,6 +28,8 @@ ROTAS_PUBLICAS = {
     ("POST", "/auth/login/2fa"),      # usa o desafio de 5 min, não o access token
     ("POST", "/auth/refresh"),        # usa o cookie httpOnly
     ("POST", "/auth/logout"),         # só apaga o cookie; funciona mesmo com sessão expirada
+    ("POST", "/auth/esqueci-senha"),  # quem esqueceu a senha não tem token; resposta igual para todo e-mail
+    ("POST", "/auth/redefinir-senha"),  # usa o link de 30 min do e-mail, não o access token
 }
 MENSAGEM_401 = {"detail": "Não autenticado."}
 

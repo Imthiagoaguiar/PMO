@@ -118,6 +118,13 @@ class Settings(BaseSettings):
     resend_api_key: Optional[str] = None
     # Em teste, o Resend só entrega a partir de onboarding@resend.dev (e só para o e-mail da sua conta).
     email_remetente: str = "PMO <onboarding@resend.dev>"
+    # Endereço do front usado nos links dos e-mails (redefinição de senha). Padrão: a 1ª de CORS_ORIGENS.
+    frontend_url: Optional[str] = None
+    redefinicao_senha_minutos: int = Field(30, ge=5, le=24 * 60)
+
+    @property
+    def url_do_front(self) -> str:
+        return (self.frontend_url or self.cors_origens[0]).rstrip("/")
 
     @field_validator("fuso_horario")
     @classmethod
@@ -137,6 +144,8 @@ class Settings(BaseSettings):
                 raise ValueError("CORS_ORIGENS não pode conter '*' em produção.")
             if not self.chave_2fa:
                 raise ValueError("CHAVE_2FA é obrigatória em produção.")
+            if not self.url_do_front.startswith("https://"):
+                raise ValueError("Em produção, o link dos e-mails (FRONTEND_URL ou a 1ª de CORS_ORIGENS) deve usar https://.")
         if self.clerk_emissor:
             self.clerk_emissor = self.clerk_emissor.rstrip("/")
             if not self.clerk_emissor.startswith("https://"):

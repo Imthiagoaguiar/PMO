@@ -8,6 +8,7 @@ import json
 import random
 from datetime import date, datetime, timedelta, timezone
 
+import openpyxl
 import pytest
 from pypdf import PdfReader
 
@@ -141,6 +142,35 @@ def test_pdf_de_projeto_grande_resume_o_gantt(client, grande):
     texto = " ".join(" ".join(p.extract_text() for p in PdfReader(io.BytesIO(r.content)).pages).split())
     com_datas = sum(1 for l in grande["linhas"] if l["inicio"])
     assert f"+{com_datas - 60} tarefa(s) não aparecem aqui" in texto
+
+
+def test_exportacao_em_lotes_traz_todas_as_tarefas_na_ordem(client, grande, monkeypatch):
+    """A exportação lê o banco em lotes: lotes pequenos não podem perder nem repetir tarefa."""
+    from app import services
+
+    monkeypatch.setattr(services, "LOTE_EXPORTACAO", 7)
+    r = client.get(f"/projetos/{grande['projeto']['id']}/exportar", headers=grande["h"])
+    assert r.status_code == 200
+    planilha = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True)["Cronograma"]
+    cabecalho, *linhas = planilha.iter_rows(values_only=True)
+    assert cabecalho == tuple(services.COLUNAS_EXPORTACAO)
+
+    # Ordem esperada: fases na sequência do Waterfall; dentro da fase, a ordem da importação.
+    esperado = [
+        (l["fase"], l["descricao"], l["inicio"], l["fim"], None, l["percentual"], l["pilar"] or None)
+        for fase in FASES for l in grande["linhas"] if l["fase"] == fase
+    ]
+    # O modo contínuo não grava células vazias no fim da linha (o Excel, o pandas e a nossa
+    # importação completam a linha): aqui também.
+    completas = [tuple(linha) + (None,) * (len(cabecalho) - len(linha)) for linha in linhas]
+    lidas = [(f, d, i and i.date(), fim and fim.date(), resp, pct, pil) for f, d, i, fim, resp, pct, pil in completas]
+    assert lidas == esperado
+
+    # E a planilha grande volta pela importação sem perder nada.
+    de_volta = postar_importacao(client, "/projetos/importar", data={"nome_projeto": "Grande (cópia)"},
+                                 files={"arquivo": ("g.xlsx", r.content)}, headers=grande["h"])
+    assert de_volta.status_code == 201, de_volta.text
+    assert de_volta.json()["total_tarefas_importadas"] == len(esperado)
 
 
 def test_rota_paginada_respeita_permissoes(client, grande, criar_usuario, login):
