@@ -349,6 +349,34 @@ def test_resposta_da_ia_fora_do_formato_e_descartada(monkeypatch, bruto):
     assert "IA" in situacao or "analisado" in situacao
 
 
+def test_resposta_da_ia_com_acento_e_listas_longas_e_aproveitada(monkeypatch):
+    """Rodada 8 real: o modelo escreve "Crítica"/"média" e às vezes passa do tamanho; antes a análise inteira caía."""
+    monkeypatch.setattr(settings, "groq_api_key", "gsk_teste")
+    bruto = json.dumps({
+        "resumo": "Disco quase cheio. " * 100,  # passa de 1.200 caracteres
+        "achados": [
+            {"titulo": "Disco", "gravidade": "Crítica", "evidencias": [f"e{i}" for i in range(12)]},
+            {"titulo": "Backup " + "x" * 300, "gravidade": " média ", "como_investigar": ["a"] * 20},
+        ] + [{"titulo": f"Achado {i}", "gravidade": "baixa"} for i in range(20)],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(analista, "_chamar", lambda c: bruto)
+    resposta, situacao = analista.analisar(_sinais_base(), [])
+    assert resposta is not None and situacao.startswith("analisado por")
+    assert [a.gravidade for a in resposta.achados[:2]] == ["critica", "media"]
+    assert len(resposta.achados) == 15 and len(resposta.achados[0].evidencias) == 8
+    assert len(resposta.achados[1].titulo) == 160 and len(resposta.resumo) == 1200
+
+
+def test_formato_invalido_loga_so_os_campos(monkeypatch, caplog):
+    monkeypatch.setattr(settings, "groq_api_key", "gsk_teste")
+    segredo = "texto-que-nao-pode-ir-para-o-log"
+    monkeypatch.setattr(analista, "_chamar", lambda c: json.dumps(
+        {"resumo": "ok ok", "achados": [{"titulo": segredo, "gravidade": "apocalipse"}]}))
+    with caplog.at_level("WARNING", logger="pmo.vigia"):
+        assert analista.analisar(_sinais_base(), [])[0] is None
+    assert "achados.0.gravidade literal_error" in caplog.text and segredo not in caplog.text
+
+
 def test_groq_fora_do_ar_nao_derruba_a_rodada(monkeypatch):
     import groq
     import httpx

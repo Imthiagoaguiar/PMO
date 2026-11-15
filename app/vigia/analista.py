@@ -13,9 +13,10 @@ import re
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import groq
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.config import settings
+from app.texto import normalizar
 
 logger = logging.getLogger("pmo.vigia")
 MAX_CARACTERES = 14_000
@@ -50,6 +51,21 @@ Responda SOMENTE com JSON, em português do Brasil, neste formato:
               "causa_provavel": "...", "impacto": "...", "como_investigar": ["..."]}]}"""
 
 
+def _cortar_texto(maximo: int):
+    """O modelo às vezes passa um pouco do tamanho: corta em vez de jogar a análise inteira fora."""
+    def _cortar(valor: Any) -> Any:
+        return valor[: maximo - 1] + "…" if isinstance(valor, str) and len(valor) > maximo else valor
+    return _cortar
+
+
+def _cortar_lista(maximo: int, tamanho_item: int):
+    def _cortar(valor: Any) -> Any:
+        if not isinstance(valor, list):
+            return valor
+        return [_cortar_texto(tamanho_item)(v) for v in valor[:maximo]]
+    return _cortar
+
+
 class AchadoIA(BaseModel):
     titulo: str = Field(..., min_length=3, max_length=160)
     gravidade: Literal["critica", "alta", "media", "baixa"]
@@ -58,10 +74,28 @@ class AchadoIA(BaseModel):
     impacto: Optional[str] = Field(None, max_length=600)
     como_investigar: List[str] = Field(default_factory=list, max_length=8)
 
+    @field_validator("gravidade", mode="before")
+    @classmethod
+    def _sem_acento(cls, valor: Any) -> Any:
+        # Em português o modelo às vezes escreve "Crítica" ou "média": vale o mesmo que "critica"/"media".
+        return normalizar(valor) if isinstance(valor, str) else valor
+
+    _titulo = field_validator("titulo", mode="before")(_cortar_texto(160))
+    _causa = field_validator("causa_provavel", mode="before")(_cortar_texto(800))
+    _impacto = field_validator("impacto", mode="before")(_cortar_texto(600))
+    _listas = field_validator("evidencias", "como_investigar", mode="before")(_cortar_lista(8, 2000))
+
 
 class RespostaIA(BaseModel):
     resumo: str = Field(..., min_length=3, max_length=1200)
     achados: List[AchadoIA] = Field(default_factory=list, max_length=15)
+
+    _resumo = field_validator("resumo", mode="before")(_cortar_texto(1200))
+
+    @field_validator("achados", mode="before")
+    @classmethod
+    def _no_maximo_15(cls, valor: Any) -> Any:
+        return valor[:15] if isinstance(valor, list) else valor
 
 
 def anonimizar(valor: Any) -> Any:
@@ -99,8 +133,13 @@ def analisar(sinais: Dict[str, Any], achados_regras: List[Dict[str, Any]]) -> Tu
     try:
         bruto = _chamar(f"<dados>\n{dados}\n</dados>")
         return RespostaIA.model_validate(json.loads(bruto)), f"analisado por {settings.groq_modelo}"
-    except (json.JSONDecodeError, ValidationError) as exc:
-        logger.warning("Vigia: resposta da IA fora do formato (%s)", type(exc).__name__)
+    except json.JSONDecodeError:
+        logger.warning("Vigia: resposta da IA fora do formato (não é JSON)")
+        return None, "IA respondeu fora do formato (relatório só com as regras)"
+    except ValidationError as exc:
+        # Só QUAIS campos falharam (ex.: achados.0.gravidade literal_error), nunca o conteúdo.
+        campos = "; ".join(f"{'.'.join(map(str, e['loc']))} {e['type']}" for e in exc.errors()[:5])
+        logger.warning("Vigia: resposta da IA fora do formato (%s)", campos)
         return None, "IA respondeu fora do formato (relatório só com as regras)"
     except groq.APIError as exc:
         logger.warning("Vigia: Groq indisponível (%s)", type(exc).__name__)
