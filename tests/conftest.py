@@ -15,6 +15,14 @@ os.environ["LOG_ARQUIVO_LIMPEZA"] = ""
 os.environ["LOG_ARQUIVO_BACKUP"] = ""
 os.environ["BACKUP_DIR"] = ""  # o vigia não cobra backup nos testes (tests/test_backup.py liga)
 os.environ["LIMITES_BACKEND"] = "memoria"  # tests/test_limites_redis.py testa o Redis
+# Integrações externas DESLIGADAS, mesmo com chaves no .env: os testes nunca mandam e-mail (Resend),
+# nunca gastam tokens (Groq) nem falam com o Clerk. Quem testa uma integração liga com monkeypatch.
+# Validade máxima: num notebook na bateria o Mac pode dormir no meio da suíte e o token de 15 min
+# venceria entre um passo e outro (aconteceu em 16/11/2026). Os testes de expiração controlam o relógio.
+os.environ["ACCESS_TOKEN_MINUTOS"] = "60"
+os.environ["RESEND_API_KEY"] = ""
+os.environ["GROQ_API_KEY"] = ""
+os.environ["CLERK_EMISSOR"] = ""
 os.environ["FILA_SINCRONA"] = "true"  # importação roda na hora (fakeredis): sem Redis nem worker  # ligado só nos testes de 2FA (test_dois_fatores.py)
 
 from typing import Callable, Dict  # noqa: E402

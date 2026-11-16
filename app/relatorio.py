@@ -8,8 +8,9 @@ sem o escape, um comentário com <img src="/etc/..."> faria o servidor ler arqui
 """
 
 import io
+import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, List, Optional, Sequence
@@ -17,7 +18,8 @@ from xml.sax.saxutils import escape
 from zoneinfo import ZoneInfo
 
 from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
-from reportlab.graphics.shapes import Drawing, Line, Rect, String
+from reportlab.graphics.charts.linecharts import HorizontalLineChart
+from reportlab.graphics.shapes import Circle, Drawing, Line, Polygon, Rect, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
@@ -25,8 +27,8 @@ from reportlab.lib.units import cm
 from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.config import settings
-from app.models import FASES_WATERFALL, Auditoria, Comentario, FarolPilar, Projeto
-from app.schemas import PilarRead, ProjetoIndicadores
+from app.models import Auditoria, Comentario, CorMarco, FarolPilar, FormaMarco, MarcoLinhaTempo, Projeto
+from app.schemas import PilarRead, ProjetoIndicadores, ResumoOrcamento
 
 MARGEM = 1.8 * cm
 LARGURA_UTIL = A4[0] - 2 * MARGEM
@@ -45,6 +47,18 @@ COR_FAROL = {
     None: colors.HexColor("#94a3b8"),
 }
 NOME_FAROL = {FarolPilar.VERDE: "Verde", FarolPilar.AMARELO: "Amarelo", FarolPilar.VERMELHO: "Vermelho", None: "Sem farol"}
+# As mesmas cores da tela (frontend/src/components/projeto/LinhaDoTempo.tsx).
+COR_MARCO = {
+    CorMarco.VERMELHO: colors.HexColor("#dc2626"), CorMarco.LARANJA: colors.HexColor("#ea580c"),
+    CorMarco.AMARELO: colors.HexColor("#ca8a04"), CorMarco.VERDE: colors.HexColor("#16a34a"),
+    CorMarco.AZUL: colors.HexColor("#2563eb"), CorMarco.ROXO: colors.HexColor("#7c3aed"),
+    CorMarco.CINZA: colors.HexColor("#64748b"),
+}
+NOME_FORMA = {
+    FormaMarco.PIN: "pin", FormaMarco.BANDEIRA: "bandeira", FormaMarco.CIRCULO: "círculo",
+    FormaMarco.QUADRADO: "quadrado", FormaMarco.TRIANGULO: "triângulo", FormaMarco.LOSANGO: "losango",
+    FormaMarco.ESTRELA: "estrela", FormaMarco.FAIXA: "período",
+}
 MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 
 ACOES = {
@@ -90,6 +104,8 @@ class DadosRelatorio:
     hoje: date
     linha_do_tempo: List[Any]  # [(tarefa, índice da fase)], as primeiras por data de início
     total_com_datas: int
+    marcos: List[MarcoLinhaTempo] = field(default_factory=list)
+    orcamento: Optional[ResumoOrcamento] = None
 
 
 def tarefas_da_linha_do_tempo(db: Any, projeto: Projeto) -> dict:
@@ -356,6 +372,88 @@ def _pilares(d: DadosRelatorio) -> List[Any]:
     return itens
 
 
+def _orcamento(d: DadosRelatorio) -> List[Any]:
+    o = d.orcamento
+    if o is None or not o.itens:
+        return []
+    itens: List[Any] = [_secao("Orçamento")]
+    cartoes = [
+        ("Aprovado", _moeda(o.orcamento_aprovado)), ("Orçado (itens)", _moeda(o.total_orcado)),
+        ("Realizado", _moeda(o.total_realizado)), ("Saldo", _moeda(o.saldo)),
+        ("Execução", f"{o.execucao:.0f}%" if o.execucao is not None else "—"),
+        ("Previsão ao final", _moeda(o.previsao_final)),
+    ]
+    tabela = Table([[_p(r, ESTILOS["kpi_rotulo"]) for r, _ in cartoes], [_p(v, ESTILOS["pequeno"]) for _, v in cartoes]],
+                   colWidths=[LARGURA_UTIL / len(cartoes)] * len(cartoes))
+    estilo = [("BACKGROUND", (0, 0), (-1, -1), COR_FUNDO), ("BOX", (0, 0), (-1, -1), 0.5, COR_BORDA)]
+    if o.saldo < 0:
+        estilo.append(("TEXTCOLOR", (3, 1), (3, 1), COR_FAROL[FarolPilar.VERMELHO]))
+    tabela.setStyle(TableStyle(estilo))
+    itens += [tabela, Spacer(1, 6)]
+
+    for alerta in o.alertas:
+        prefixo = "<b>Atenção:</b> " if alerta.nivel != "info" else "<b>Nota:</b> "
+        itens.append(Paragraph(prefixo + escape(_limpo(alerta.mensagem)), ESTILOS["pequeno"]))
+    if o.alertas:
+        itens.append(Spacer(1, 6))
+
+    if len(o.curva) >= 2:
+        itens.append(KeepTogether([Paragraph("Realizado x planejado (acumulado, por mês)", ESTILOS["normal"]),
+                                   _grafico_curva(o)]))
+
+    linhas: List[List[Any]] = [["Item", "Categoria", "Pilar", "Orçado", "Realizado", "Saldo", "Exec."]]
+    estilo = list(TABELA_PADRAO)
+    for i, item in enumerate(o.itens, start=1):
+        linhas.append([_p(item.descricao, ESTILOS["pequeno"]), item.categoria.value.upper(),
+                       _p(item.pilar_nome or "—", ESTILOS["pequeno"]), _moeda(item.valor_orcado),
+                       _moeda(item.valor_realizado), _moeda(item.saldo),
+                       f"{item.execucao:.0f}%" if item.execucao is not None else "—"])
+        if item.estourado:
+            estilo.append(("TEXTCOLOR", (5, i), (6, i), COR_FAROL[FarolPilar.VERMELHO]))
+    larguras = [4.6, 1.7, 2.4, 2.5, 2.5, 2.5, 1.2]
+    tabela = Table(linhas, colWidths=[w * cm for w in larguras], repeatRows=1)
+    tabela.setStyle(TableStyle(estilo + [("ALIGN", (3, 0), (-1, -1), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    itens += [Spacer(1, 6), tabela]
+    return itens
+
+
+def _grafico_curva(o: ResumoOrcamento) -> Drawing:
+    desenho = Drawing(LARGURA_UTIL, 160)
+    grafico = HorizontalLineChart()
+    grafico.x, grafico.y, grafico.width, grafico.height = 1.6 * cm, 28, LARGURA_UTIL - 2 * cm, 110
+    series = [[float(p.realizado_acumulado) for p in o.curva]]
+    com_plano = any(p.planejado_acumulado is not None for p in o.curva)
+    if com_plano:
+        series.append([float(p.planejado_acumulado or 0) for p in o.curva])
+    grafico.data = series
+    passo = max(1, len(o.curva) // 12)
+    grafico.categoryAxis.categoryNames = [
+        f"{MESES[int(p.mes[5:]) - 1]}/{p.mes[2:4]}" if i % passo == 0 else "" for i, p in enumerate(o.curva)]
+    grafico.categoryAxis.labels.fontName = "Helvetica"
+    grafico.categoryAxis.labels.fontSize = 6.5
+    grafico.categoryAxis.strokeColor = COR_BORDA
+    grafico.valueAxis.valueMin = 0
+    grafico.valueAxis.labels.fontName = "Helvetica"
+    grafico.valueAxis.labels.fontSize = 7
+    grafico.valueAxis.labelTextFormat = _abreviar
+    grafico.valueAxis.visibleGrid = True
+    grafico.valueAxis.gridStrokeColor = COR_BORDA
+    grafico.valueAxis.strokeColor = COR_BORDA
+    grafico.lines[0].strokeColor = COR_PRIMARIA
+    grafico.lines[0].strokeWidth = 1.6
+    if com_plano:
+        grafico.lines[1].strokeColor = colors.HexColor("#94a3b8")
+        grafico.lines[1].strokeWidth = 1.2
+        grafico.lines[1].strokeDashArray = [3, 2]
+    desenho.add(grafico)
+    legendas = [("Realizado", COR_PRIMARIA)] + ([("Planejado", colors.HexColor("#94a3b8"))] if com_plano else [])
+    for i, (rotulo, cor) in enumerate(legendas):
+        x = 1.6 * cm + i * 2.6 * cm
+        desenho.add(Line(x, 152, x + 10, 152, strokeColor=cor, strokeWidth=1.6))
+        desenho.add(String(x + 13, 149.5, rotulo, fontName="Helvetica", fontSize=7))
+    return desenho
+
+
 def _abreviar(valor: float) -> str:
     for limite, sufixo in ((1e9, " bi"), (1e6, " mi"), (1e3, " mil")):
         if abs(valor) >= limite:
@@ -395,37 +493,82 @@ def _grafico_financeiro(pilares: List[PilarRead]) -> Drawing:
 
 def _linha_do_tempo(d: DadosRelatorio) -> List[Any]:
     itens: List[Any] = [_secao("Linha do tempo")]
-    tarefas = d.linha_do_tempo
-    if not tarefas:
+    tarefas, marcos = d.linha_do_tempo, d.marcos
+    if not tarefas and not marcos:
         return itens + [_p("Nenhuma tarefa com início e término definidos.", ESTILOS["fraco"])]
     omitidas = max(d.total_com_datas - len(tarefas), 0)
 
-    inicio = min(t.data_inicio for t, _ in tarefas)
-    fim = max(t.data_fim for t, _ in tarefas) + timedelta(days=1)
+    datas = [t.data_inicio for t, _ in tarefas] + [m.data for m in marcos]
+    fins = [t.data_fim for t, _ in tarefas] + [m.data_fim or m.data for m in marcos]
+    inicio, fim = min(datas), max(fins) + timedelta(days=1)
     if (fim - inicio).days < 14:
         fim = inicio + timedelta(days=14)
 
-    for bloco in range(0, len(tarefas), LINHAS_POR_BLOCO):
-        itens.append(_gantt(tarefas[bloco: bloco + LINHAS_POR_BLOCO], inicio, fim, d.hoje))
-        itens.append(Spacer(1, 6))
+    if tarefas:
+        for bloco in range(0, len(tarefas), LINHAS_POR_BLOCO):
+            itens.append(_gantt(tarefas[bloco: bloco + LINHAS_POR_BLOCO], inicio, fim, d.hoje, marcos))
+            itens.append(Spacer(1, 6))
+    else:
+        itens += [_gantt([], inicio, fim, d.hoje, marcos), Spacer(1, 6)]
 
     legenda = Drawing(LARGURA_UTIL, 12)
     x = 0.0
-    for i, titulo in enumerate(FASES_WATERFALL):
-        legenda.add(Rect(x, 2, 8, 8, fillColor=CORES_FASE[i], strokeColor=None))
-        legenda.add(String(x + 11, 3, _limpo(titulo), fontName="Helvetica", fontSize=7))
-        x += 2.9 * cm
+    # As fases do PROJETO (renomeadas, criadas ou excluídas pelo editor), não as 5 fixas do Waterfall.
+    for i, fase in enumerate(d.projeto.fases[:8]):
+        titulo = _limpo(fase.titulo)
+        legenda.add(Rect(x, 2, 8, 8, fillColor=CORES_FASE[i % len(CORES_FASE)], strokeColor=None))
+        legenda.add(String(x + 11, 3, titulo if len(titulo) <= 16 else titulo[:15] + "…", fontName="Helvetica", fontSize=7))
+        x += 2.2 * cm
     legenda.add(Line(x, 0, x, 11, strokeColor=COR_FAROL[FarolPilar.VERMELHO], strokeDashArray=[2, 2]))
     legenda.add(String(x + 4, 3, "hoje", fontName="Helvetica", fontSize=7))
     itens.append(legenda)
     if omitidas:
         itens.append(_p(f"Mostrando as {MAX_TAREFAS_LINHA_DO_TEMPO} primeiras tarefas por data de início; "
                         f"+{omitidas} tarefa(s) não aparecem aqui.", ESTILOS["fraco"]))
+
+    if marcos:
+        linhas: List[List[Any]] = [["", "Data", "Marco", "Descrição"]]
+        estilo = list(TABELA_PADRAO)
+        for i, m in enumerate(marcos, start=1):
+            quando = _data(m.data) + (f" a {_data(m.data_fim)}" if m.data_fim else "")
+            linhas.append(["", quando, _p(m.titulo, ESTILOS["pequeno"]), _p(m.descricao or "—", ESTILOS["pequeno"])])
+            estilo.append(("BACKGROUND", (0, i), (0, i), COR_MARCO[m.cor]))
+        tabela = Table(linhas, colWidths=[0.4 * cm, 3.8 * cm, 4.6 * cm, LARGURA_UTIL - 8.8 * cm], repeatRows=1)
+        tabela.setStyle(TableStyle(estilo + [("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+        itens += [Spacer(1, 6), Paragraph("Marcos", ESTILOS["normal"]), Spacer(1, 3), tabela]
     return itens
 
 
-def _gantt(tarefas: List[Any], inicio: date, fim: date, hoje: date) -> Drawing:
-    linha, topo, rotulo = 13.0, 16.0, 5.4 * cm
+def _forma_marco(m: MarcoLinhaTempo, x: float, y: float, cor: Any) -> List[Any]:
+    """Desenho pequeno (~8 pt) da forma do marco, centrado em (x, y)."""
+    r = 3.6
+    if m.forma == FormaMarco.CIRCULO:
+        return [Circle(x, y, r, fillColor=cor, strokeColor=None)]
+    if m.forma == FormaMarco.QUADRADO:
+        return [Rect(x - r, y - r, 2 * r, 2 * r, fillColor=cor, strokeColor=None)]
+    if m.forma == FormaMarco.TRIANGULO:
+        return [Polygon([x - r, y - r, x + r, y - r, x, y + r], fillColor=cor, strokeColor=None)]
+    if m.forma == FormaMarco.LOSANGO:
+        return [Polygon([x, y + r, x + r, y, x, y - r, x - r, y], fillColor=cor, strokeColor=None)]
+    if m.forma == FormaMarco.ESTRELA:
+        pontos = []
+        for k in range(10):
+            raio = r * 1.2 if k % 2 == 0 else r * 0.5
+            ang = math.pi / 2 + k * math.pi / 5
+            pontos += [x + raio * math.cos(ang), y + raio * math.sin(ang)]
+        return [Polygon(pontos, fillColor=cor, strokeColor=None)]
+    if m.forma == FormaMarco.PIN:
+        return [Line(x, y - r, x, y + 1, strokeColor=cor, strokeWidth=1), Circle(x, y + 2, 2.4, fillColor=cor, strokeColor=None)]
+    # bandeira (e a ponta de uma faixa)
+    return [Line(x, y - r, x, y + r, strokeColor=cor, strokeWidth=1),
+            Polygon([x, y + r, x + 6, y + r - 2, x, y + r - 4], fillColor=cor, strokeColor=None)]
+
+
+def _gantt(tarefas: List[Any], inicio: date, fim: date, hoje: date,
+           marcos: Sequence[MarcoLinhaTempo] = ()) -> Drawing:
+    linha, rotulo = 13.0, 5.4 * cm
+    faixa_marcos = 14.0 if marcos else 0.0  # a linha dos marcos, logo abaixo das datas
+    topo = 16.0 + faixa_marcos
     area = LARGURA_UTIL - rotulo
     altura = topo + len(tarefas) * linha + 2
     desenho = Drawing(LARGURA_UTIL, altura)
@@ -453,11 +596,26 @@ def _gantt(tarefas: List[Any], inicio: date, fim: date, hoje: date) -> Drawing:
         texto = texto if len(texto) <= 42 else texto[:41] + "…"
         desenho.add(String(2, y + 3.5, texto, fontName="Helvetica", fontSize=7))
         x0, x1 = x(tarefa.data_inicio), x(tarefa.data_fim + timedelta(days=1))
-        desenho.add(Rect(x0, y + 2.5, max(x1 - x0, 1.5), linha - 5, fillColor=CORES_FASE[fase], strokeColor=None))
+        desenho.add(Rect(x0, y + 2.5, max(x1 - x0, 1.5), linha - 5, fillColor=CORES_FASE[fase % len(CORES_FASE)], strokeColor=None))
         if tarefa.percentual_conclusao:
             # Parte já feita, mais escura sobre a barra.
             feito = (x1 - x0) * tarefa.percentual_conclusao / 100
             desenho.add(Rect(x0, y + 2.5, max(feito, 0.5), 2, fillColor=colors.black, fillOpacity=0.35, strokeColor=None))
+
+    if marcos:
+        y_marcos = altura - 16.0 - faixa_marcos / 2
+        desenho.add(String(2, y_marcos - 2.5, "Marcos", fontName="Helvetica-Bold", fontSize=7, fillColor=COR_TEXTO_FRACO))
+        for m in marcos:
+            cor = COR_MARCO[m.cor]
+            if m.forma == FormaMarco.FAIXA and m.data_fim:
+                x0, x1 = x(m.data), x(m.data_fim + timedelta(days=1))
+                desenho.add(Rect(x0, 0, max(x1 - x0, 1.5), altura - 16.0, fillColor=cor, fillOpacity=0.12, strokeColor=None))
+                desenho.add(Rect(x0, y_marcos - 3, max(x1 - x0, 1.5), 6, fillColor=cor, strokeColor=None))
+                continue
+            xm = x(m.data) + (x(m.data + timedelta(days=1)) - x(m.data)) / 2
+            desenho.add(Line(xm, 0, xm, y_marcos - 4, strokeColor=cor, strokeWidth=0.6, strokeDashArray=[1, 1.5]))
+            for parte in _forma_marco(m, xm, y_marcos, cor):
+                desenho.add(parte)
 
     if inicio <= hoje < fim:
         desenho.add(Line(x(hoje), 0, x(hoje), altura - topo + 2, strokeColor=COR_FAROL[FarolPilar.VERMELHO],
@@ -512,7 +670,7 @@ def gerar_pdf(d: DadosRelatorio) -> bytes:
         canvas.drawRightString(A4[0] - MARGEM, MARGEM / 2, f"Página {doc.page}")
         canvas.restoreState()
 
-    conteudo = (_cabecalho(d) + _resumo(d) + _pilares(d) + _linha_do_tempo(d)
+    conteudo = (_cabecalho(d) + _resumo(d) + _pilares(d) + _orcamento(d) + _linha_do_tempo(d)
                 + _historico(d) + _comentarios(d))
     documento.build(conteudo, onFirstPage=_rodape, onLaterPages=_rodape)
     return buffer.getvalue()

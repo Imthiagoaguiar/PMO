@@ -6,7 +6,7 @@ from typing import Annotated, Any, Dict, Generic, List, Literal, Optional, TypeV
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.models import FASES_WATERFALL, FarolPilar, GravidadeAchado, StatusImportacao, PapelProjeto, PapelUsuario, ProvedorAuth, StatusProjeto
+from app.models import FASES_WATERFALL, MAX_FASES, CategoriaOrcamento, CorMarco, FarolPilar, FormaMarco, TipoDependencia, chave_da_fase, GravidadeAchado, StatusImportacao, PapelProjeto, PapelUsuario, ProvedorAuth, StatusProjeto
 from app.security import ID_MAXIMO
 from app.texto import normalizar
 
@@ -89,24 +89,32 @@ class TarefaNova(BaseModel):
 
 
 class FaseNova(BaseModel):
-    fase: str = Field(..., description="Um dos 5 nomes do Waterfall (aceita sem acento/maiúsculas)")
+    fase: str = Field(
+        ..., min_length=1, max_length=50,
+        description="Nome da fase: uma do Waterfall (aceita sem acento/maiúsculas) ou uma fase própria",
+    )
     tarefas: List[TarefaNova] = Field(default_factory=list, max_length=100)
 
-    @field_validator("fase")
+    @field_validator("fase", mode="before")
     @classmethod
-    def _fase_oficial(cls, v: str) -> str:
-        oficial = _FASE_POR_NOME.get(normalizar(v))
-        if oficial is None:
-            raise ValueError(f"fase inválida: use uma de {', '.join(FASES_WATERFALL)}")
-        return oficial
+    def _nome(cls, v: Any) -> Any:
+        if not isinstance(v, str):
+            return v
+        v = " ".join(v.split())
+        # "execucao" vira "Execução": as fases do Waterfall ficam com o nome oficial.
+        return _FASE_POR_NOME.get(normalizar(v), v)
 
 
 class ProjetoManualCreate(BaseModel):
     nome_projeto: str = Field(..., min_length=3, max_length=200)
     orcamento_aprovado: Optional[Decimal] = Field(None, ge=0, max_digits=14, decimal_places=2)
     data_inicio: Optional[DataProjeto] = Field(None, description="Também é o início do cronograma encadeado")
+    modelo_fases: Literal["waterfall", "em_branco"] = Field(
+        "waterfall",
+        description='"waterfall": nasce com as 5 fases (Iniciação... Encerramento); "em_branco": só com as fases de `fases`',
+    )
     fases: List[FaseNova] = Field(
-        default_factory=list, max_length=len(FASES_WATERFALL),
+        default_factory=list, max_length=MAX_FASES,
         description="Opcional: tarefas iniciais (o mesmo formato que POST /projetos/ia devolve)",
     )
 
@@ -119,9 +127,14 @@ class ProjetoManualCreate(BaseModel):
 
     @model_validator(mode="after")
     def _cronograma(self) -> "ProjetoManualCreate":
-        nomes = [f.fase for f in self.fases]
+        nomes = [chave_da_fase(f.fase) for f in self.fases]
         if len(nomes) != len(set(nomes)):
             raise ValueError("cada fase só pode aparecer uma vez em 'fases'")
+        if not all(nomes):
+            raise ValueError("nome de fase vazio")
+        padrao = {chave_da_fase(t) for t in FASES_WATERFALL} if self.modelo_fases == "waterfall" else set()
+        if len(padrao | set(nomes)) > MAX_FASES:
+            raise ValueError(f"no máximo {MAX_FASES} fases por projeto")
         tarefas = [t for f in self.fases for t in f.tarefas]
         if len(tarefas) > MAX_TAREFAS_NA_CRIACAO:
             raise ValueError(f"no máximo {MAX_TAREFAS_NA_CRIACAO} tarefas por projeto na criação")
@@ -211,6 +224,9 @@ class ProjetoUpdate(BaseModel):
     orcamento_aprovado: Optional[Decimal] = Field(None, ge=0, max_digits=14, decimal_places=2)
     data_inicio: Optional[DataProjeto] = None
     status: Optional[StatusProjeto] = None
+    seguir_ordem_fases: Optional[bool] = Field(
+        None, description="true: a fase atual é a primeira, na ordem, com pendência; false: fases em paralelo",
+    )
     versao: Optional[int] = Field(
         None, ge=1, le=ID_MAXIMO,
         description="Versão que você leu/editou. Se alguém salvou depois dela, a resposta é 409 (nada é sobrescrito).",
@@ -223,7 +239,7 @@ class ProjetoUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _obrigatorios(self) -> "ProjetoUpdate":
-        _proibir_nulos(self, ("nome_projeto", "status"))
+        _proibir_nulos(self, ("nome_projeto", "status", "seguir_ordem_fases"))
         return self
 
 
@@ -303,11 +319,269 @@ class TarefaRead(BaseModel):
     versao: int = Field(..., description="Envie de volta no PATCH (bloqueio otimista)")
 
 
+# ---------- Dependências ----------
+
+
+class DependenciaCreate(BaseModel):
+    predecessora_id: IdBanco = Field(..., description="A: a tarefa que precisa terminar antes")
+    sucessora_id: IdBanco = Field(..., description="B: a tarefa que depende de A")
+    tipo: TipoDependencia = Field(
+        TipoDependencia.INICIO_APOS_FIM,
+        description="inicio_apos_fim: B só começa depois que A terminar; fim_apos_fim: B só termina depois de A",
+    )
+    ajustar_datas: bool = Field(True, description="Empurra as datas de B (e de quem depende de B) para depois de A")
+
+
+class DependenciaRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    predecessora_id: int
+    sucessora_id: int
+    tipo: TipoDependencia
+
+
+class DependenciaCriada(BaseModel):
+    dependencia: DependenciaRead
+    reprogramadas: List["TarefaRead"] = Field(default_factory=list, description="Tarefas cujas datas foram empurradas")
+
+
+class Reprogramacao(BaseModel):
+    reprogramadas: List["TarefaRead"]
+
+
+# ---------- Marcos da linha do tempo ----------
+
+
+class MarcoBase(BaseModel):
+    @field_validator("titulo", "descricao", mode="before", check_fields=False)
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+
+class MarcoCreate(MarcoBase):
+    titulo: str = Field(..., min_length=1, max_length=80, description="Ex.: Pré-entrega, Go-live, Auditoria")
+    descricao: Optional[str] = Field(None, max_length=500)
+    data: DataProjeto
+    data_fim: Optional[DataProjeto] = Field(None, description="Só na forma 'faixa' (um período)")
+    forma: FormaMarco = FormaMarco.BANDEIRA
+    cor: CorMarco = CorMarco.AZUL
+
+    @model_validator(mode="after")
+    def _periodo(self) -> "MarcoCreate":
+        conferir_periodo_do_marco(self.forma, self.data, self.data_fim)
+        return self
+
+
+class MarcoUpdate(MarcoBase):
+    titulo: Optional[str] = Field(None, min_length=1, max_length=80)
+    descricao: Optional[str] = Field(None, max_length=500)
+    data: Optional[DataProjeto] = None
+    data_fim: Optional[DataProjeto] = None
+    forma: Optional[FormaMarco] = None
+    cor: Optional[CorMarco] = None
+    versao: Optional[int] = Field(None, ge=1, le=ID_MAXIMO, description="Bloqueio otimista (409 se alguém salvou antes)")
+
+    @model_validator(mode="after")
+    def _obrigatorios(self) -> "MarcoUpdate":
+        _proibir_nulos(self, ("titulo", "data", "forma", "cor"))
+        return self
+
+
+def conferir_periodo_do_marco(forma: FormaMarco, data: date, data_fim: Optional[date]) -> None:
+    if forma == FormaMarco.FAIXA:
+        if data_fim is None:
+            raise ValueError("a faixa precisa de data_fim (o fim do período)")
+        if data_fim < data:
+            raise ValueError("data_fim não pode ser anterior à data")
+    elif data_fim is not None:
+        raise ValueError("só a forma 'faixa' tem data_fim; os outros marcos são um dia só")
+
+
+class MarcoRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    titulo: str
+    descricao: Optional[str]
+    data: date
+    data_fim: Optional[date]
+    forma: FormaMarco
+    cor: CorMarco
+    versao: int
+
+
+# ---------- Orçamento ----------
+
+# Aceita negativo (estorno); o Dinheiro dos pilares, mais abaixo, não.
+ValorMonetario = Annotated[Decimal, Field(max_digits=14, decimal_places=2)]
+
+
+class ItemOrcamentoCreate(BaseModel):
+    descricao: str = Field(..., min_length=1, max_length=150)
+    categoria: CategoriaOrcamento = CategoriaOrcamento.OPEX
+    pilar_id: Optional[IdBanco] = Field(None, description="Pilar deste projeto (o financeiro do pilar passa a vir daqui)")
+    valor_orcado: ValorMonetario = Field(..., ge=0)
+
+    @field_validator("descricao", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+
+class ItemOrcamentoUpdate(BaseModel):
+    descricao: Optional[str] = Field(None, min_length=1, max_length=150)
+    categoria: Optional[CategoriaOrcamento] = None
+    pilar_id: Optional[IdBanco] = Field(None, description="null tira o item do pilar")
+    valor_orcado: Optional[ValorMonetario] = Field(None, ge=0)
+    versao: Optional[int] = Field(None, ge=1, le=ID_MAXIMO, description="Bloqueio otimista (409 se alguém salvou antes)")
+
+    @field_validator("descricao", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+    @model_validator(mode="after")
+    def _obrigatorios(self) -> "ItemOrcamentoUpdate":
+        _proibir_nulos(self, ("descricao", "categoria", "valor_orcado"))
+        return self
+
+
+class LancamentoCreate(BaseModel):
+    item_id: IdBanco
+    data: DataProjeto
+    descricao: str = Field(..., min_length=1, max_length=200)
+    documento: Optional[str] = Field(None, max_length=60, description="Nota fiscal, pedido de compra...")
+    valor: ValorMonetario = Field(..., description="Gasto (positivo) ou estorno (negativo); zero não")
+
+    @field_validator("descricao", "documento", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+    @field_validator("valor")
+    @classmethod
+    def _nao_zero(cls, v: Decimal) -> Decimal:
+        if v == 0:
+            raise ValueError("o valor não pode ser zero")
+        return v
+
+
+class LancamentoUpdate(BaseModel):
+    item_id: Optional[IdBanco] = None
+    data: Optional[DataProjeto] = None
+    descricao: Optional[str] = Field(None, min_length=1, max_length=200)
+    documento: Optional[str] = Field(None, max_length=60)
+    valor: Optional[ValorMonetario] = None
+
+    @field_validator("descricao", "documento", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+    @model_validator(mode="after")
+    def _obrigatorios(self) -> "LancamentoUpdate":
+        _proibir_nulos(self, ("item_id", "data", "descricao", "valor"))
+        if self.valor == 0:
+            raise ValueError("o valor não pode ser zero")
+        return self
+
+
+class LancamentoRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    item_id: int
+    data: date
+    descricao: str
+    documento: Optional[str]
+    valor: Decimal
+    criado_por: Optional["UsuarioResumo"] = None
+    criado_em: InstanteUTC
+
+
+class ItemOrcamentoRead(BaseModel):
+    id: int
+    descricao: str
+    categoria: CategoriaOrcamento
+    pilar_id: Optional[int]
+    pilar_nome: Optional[str]
+    valor_orcado: Decimal
+    valor_realizado: Decimal
+    saldo: Decimal = Field(..., description="Orçado - realizado (negativo = estourou)")
+    execucao: Optional[float] = Field(None, description="Realizado / orçado, em %")
+    estourado: bool
+    lancamentos: int = Field(..., description="Quantos lançamentos o item tem")
+    versao: int
+
+
+class TotalOrcamento(BaseModel):
+    chave: str = Field(..., description="Categoria (capex/opex) ou id do pilar")
+    nome: str
+    orcado: Decimal
+    realizado: Decimal
+
+
+class PontoCurva(BaseModel):
+    mes: str = Field(..., description="AAAA-MM")
+    realizado_no_mes: Decimal
+    realizado_acumulado: Decimal
+    planejado_acumulado: Optional[Decimal] = Field(None, description="Orçado distribuído por igual no período do projeto")
+
+
+class AlertaOrcamento(BaseModel):
+    nivel: Literal["alto", "medio", "info"]
+    mensagem: str
+
+
+class ResumoOrcamento(BaseModel):
+    orcamento_aprovado: Optional[Decimal] = Field(None, description="O valor aprovado do projeto (cadastro)")
+    total_orcado: Decimal = Field(..., description="Soma dos itens")
+    total_realizado: Decimal
+    saldo: Decimal
+    execucao: Optional[float] = Field(None, description="Realizado / orçado, em %")
+    avanco_fisico: float = Field(..., description="% concluído do cronograma")
+    previsao_final: Optional[Decimal] = Field(
+        None, description="Custo previsto ao final no ritmo atual: realizado / avanço físico (EAC)",
+    )
+    itens: List[ItemOrcamentoRead]
+    por_categoria: List[TotalOrcamento]
+    por_pilar: List[TotalOrcamento]
+    curva: List[PontoCurva]
+    alertas: List[AlertaOrcamento]
+
+
 class MinhaTarefa(TarefaRead):
     projeto_id: int
     nome_projeto: str
     fase_titulo: str
     atrasada: bool
+
+
+class FaseCreate(BaseModel):
+    titulo: str = Field(..., min_length=1, max_length=50)
+    posicao: Optional[int] = Field(
+        None, ge=1, le=MAX_FASES, description="1 = primeira. Sem posição, entra no fim.",
+    )
+
+    @field_validator("titulo", mode="before")
+    @classmethod
+    def _limpar(cls, v: Any) -> Any:
+        return " ".join(v.split()) if isinstance(v, str) else v
+
+
+class FaseUpdate(BaseModel):
+    titulo: str = Field(..., min_length=1, max_length=50)
+
+    @field_validator("titulo", mode="before")
+    @classmethod
+    def _limpar(cls, v: Any) -> Any:
+        return " ".join(v.split()) if isinstance(v, str) else v
+
+
+class OrdemFases(BaseModel):
+    ids: List[IdBanco] = Field(..., min_length=1, max_length=MAX_FASES, description="Todas as fases, na nova ordem")
 
 
 class FaseRead(BaseModel):
@@ -329,6 +603,7 @@ class ProjetoResumo(BaseModel):
     data_inicio: Optional[date]
     status: StatusProjeto
     dono_id: int
+    seguir_ordem_fases: bool = True
     versao: int = Field(..., description="Envie de volta no PATCH (bloqueio otimista)")
 
 
@@ -418,7 +693,9 @@ class ProjetoIndicadores(BaseModel):
     tarefas_atrasadas: int = Field(..., description="Prazo vencido e percentual abaixo de 100")
     data_inicio_prevista: Optional[date] = Field(None, description="Menor data de início entre as tarefas")
     data_fim_prevista: Optional[date] = Field(None, description="Maior data de fim entre as tarefas")
-    fase_atual: Optional[str] = Field(None, description="Primeira fase, na ordem do Waterfall, com tarefa pendente")
+    fase_atual: Optional[str] = Field(
+        None, description="Primeira fase, na ordem, com tarefa pendente (só quando o projeto segue a ordem das fases)",
+    )
     fases: List[FaseIndicadores]
 
 
@@ -635,6 +912,9 @@ class PilarRead(BaseModel):
     valor_realizado: Optional[Decimal]
     desvio: Optional[Decimal] = Field(None, description="realizado - orçado (positivo = acima do orçado)")
     execucao_financeira: Optional[float] = Field(None, description="% do orçado já realizado")
+    financeiro_do_orcamento: bool = Field(
+        False, description="true: orçado/realizado vêm dos itens da aba Orçamento ligados a este pilar (não se editam aqui)",
+    )
     total_tarefas: int
     tarefas_concluidas: int
     tarefas_atrasadas: int
@@ -731,3 +1011,7 @@ class VigiaSituacao(BaseModel):
     intervalo_minutos: int
     ultima_rodada_em: Optional[InstanteUTC]
     atrasado: bool = Field(..., description="Sem rodada há mais de 2 intervalos: o vigia provavelmente parou")
+
+
+# Referências a classes definidas mais abaixo no arquivo.
+LancamentoRead.model_rebuild()

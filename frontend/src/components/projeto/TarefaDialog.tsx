@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
 import { Campo } from "@/components/comum"
+import { DependenciasDaTarefa } from "@/components/projeto/Dependencias"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -10,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api, ehConflitoDeVersao } from "@/lib/api"
 import { useAtualizarProjeto } from "@/lib/consultas"
 import { notificarErro } from "@/lib/formato"
-import type { Fase, Membro, PilarResumo, Tarefa } from "@/lib/tipos"
+import type { Fase, Membro, PilarResumo, Projeto, Tarefa } from "@/lib/tipos"
 
 const SEM_RESPONSAVEL = "nenhum"
 const SEM_PILAR = "sem-pilar"
@@ -25,10 +26,12 @@ interface Props {
   faseInicial: Fase
   /** Se informada, edita esta tarefa. */
   tarefa?: Tarefa
+  /** Para a seção de dependências (só ao editar uma tarefa que já existe). */
+  projeto?: Projeto
   aoFechar: () => void
 }
 
-export function TarefaDialog({ projetoId, fases, membros, pilares, faseInicial, tarefa, aoFechar }: Props) {
+export function TarefaDialog({ projetoId, fases, membros, pilares, faseInicial, tarefa, projeto, aoFechar }: Props) {
   const atualizar = useAtualizarProjeto(projetoId)
   const [descricao, setDescricao] = useState(tarefa?.descricao ?? "")
   const [faseId, setFaseId] = useState(String(tarefa?.fase_id ?? faseInicial.id))
@@ -100,7 +103,7 @@ export function TarefaDialog({ projetoId, fases, membros, pilares, faseInicial, 
 
   return (
     <Dialog open onOpenChange={(abrir) => !abrir && aoFechar()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[92svh] overflow-y-auto sm:max-w-lg">
         <form onSubmit={enviar} className="grid gap-4">
           <DialogHeader>
             <DialogTitle>{tarefa ? "Editar tarefa" : "Nova tarefa"}</DialogTitle>
@@ -211,6 +214,12 @@ export function TarefaDialog({ projetoId, fases, membros, pilares, faseInicial, 
               />
             </Campo>
           </div>
+
+          {tarefa && projeto ? (
+            <DependenciasDaTarefa projeto={projeto} tarefa={tarefa} podeEditar />
+          ) : (
+            <p className="text-xs text-muted-foreground">Depois de criar a tarefa, você pode definir de quais outras ela depende.</p>
+          )}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={aoFechar}>

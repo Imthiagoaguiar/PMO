@@ -218,6 +218,7 @@ function PilarDialog({ projetoId, pilar, aoFechar }: { projetoId: number; pilar?
   const [situacao, setSituacao] = useState(pilar?.status_texto ?? "")
   const [orcado, setOrcado] = useState(pilar?.valor_orcado ?? "")
   const [realizado, setRealizado] = useState(pilar?.valor_realizado ?? "")
+  const automatico = !!pilar?.financeiro_do_orcamento
 
   const dinheiro = (v: string) => (v.trim() === "" ? null : v.trim().replace(",", "."))
 
@@ -305,14 +306,21 @@ function PilarDialog({ projetoId, pilar, aoFechar }: { projetoId: number; pilar?
 
           <div className="grid grid-cols-2 gap-4">
             <Campo label="Orçado (R$)" htmlFor="pilar-orcado">
-              <Input id="pilar-orcado" type="number" min="0" step="0.01" inputMode="decimal" value={orcado} onChange={(e) => setOrcado(e.target.value)} />
+              <Input id="pilar-orcado" type="number" min="0" step="0.01" inputMode="decimal" value={orcado}
+                disabled={automatico} onChange={(e) => setOrcado(e.target.value)} />
             </Campo>
             {pilar && (
               <Campo label="Realizado (R$)" htmlFor="pilar-realizado">
-                <Input id="pilar-realizado" type="number" min="0" step="0.01" inputMode="decimal" value={realizado} onChange={(e) => setRealizado(e.target.value)} />
+                <Input id="pilar-realizado" type="number" min="0" step="0.01" inputMode="decimal" value={realizado}
+                  disabled={automatico} onChange={(e) => setRealizado(e.target.value)} />
               </Campo>
             )}
           </div>
+          {automatico && (
+            <p className="-mt-2 text-xs text-muted-foreground">
+              Este pilar tem itens na aba Orçamento: o orçado e o realizado vêm de lá (itens e lançamentos).
+            </p>
+          )}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={aoFechar} disabled={salvar.isPending}>

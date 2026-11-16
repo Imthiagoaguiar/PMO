@@ -125,7 +125,9 @@ def test_inicio_no_fim_de_semana_comeca_no_proximo_dia_util(client, gerente):
     pytest.param({"orcamento_aprovado": 10.123}, id="orcamento-3-casas"),
     pytest.param({"data_inicio": "2026-02-30"}, id="data-inexistente"),
     pytest.param({"data_inicio": "9999-12-31"}, id="data-absurda"),
-    pytest.param({"fases": [{"fase": "Fase 6", "tarefas": [TAREFA]}]}, id="fase-inexistente"),
+    # Fase com outro nome é aceita (as fases são editáveis); nome vazio ou longo demais, não.
+    pytest.param({"fases": [{"fase": "x" * 51, "tarefas": [TAREFA]}]}, id="fase-com-nome-longo"),
+    pytest.param({"fases": [{"fase": "   ", "tarefas": [TAREFA]}]}, id="fase-sem-nome"),
     pytest.param({"fases": [{"fase": "Iniciação", "tarefas": [TAREFA]}, {"fase": "iniciacao", "tarefas": [TAREFA]}]},
                  id="fase-repetida-com-outra-grafia"),
     pytest.param({"fases": [{"fase": f} for f in ORDEM_OFICIAL] + [{"fase": "Execução"}]}, id="6-fases"),

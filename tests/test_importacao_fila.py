@@ -22,7 +22,7 @@ from tests.conftest import SENHA
 
 GERENTE, OUTRO = "gerente@empresa.com.br", "outro@empresa.com.br"
 CSV_OK = "Fase;Descrição;Pilar\nIniciação;TAP;TI\nExecução;Construir;CAPEX\n".encode()
-CSV_RUIM = "Fase;Descrição\nIniciação;TAP\nFase Inventada;X\nExecução;\n".encode()
+CSV_RUIM = ("Fase;Descrição\nIniciação;TAP\n" + "F" * 60 + ";X\nExecução;\n").encode()  # fase longa demais; sem descrição
 
 
 @pytest.fixture

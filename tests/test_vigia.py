@@ -367,14 +367,23 @@ def test_resposta_da_ia_com_acento_e_listas_longas_e_aproveitada(monkeypatch):
     assert len(resposta.achados[1].titulo) == 160 and len(resposta.resumo) == 1200
 
 
-def test_formato_invalido_loga_so_os_campos(monkeypatch, caplog):
+def test_achado_malformado_e_descartado_sozinho_e_o_log_so_diz_o_campo(monkeypatch, caplog):
+    """Rodada 10 real: "achados.1 model_type" (um texto solto na lista) derrubava a análise inteira."""
     monkeypatch.setattr(settings, "groq_api_key", "gsk_teste")
     segredo = "texto-que-nao-pode-ir-para-o-log"
-    monkeypatch.setattr(analista, "_chamar", lambda c: json.dumps(
-        {"resumo": "ok ok", "achados": [{"titulo": segredo, "gravidade": "apocalipse"}]}))
+    monkeypatch.setattr(analista, "_chamar", lambda c: json.dumps({"resumo": "Disco quase cheio.", "achados": [
+        {"titulo": "Disco quase cheio", "gravidade": "media"},
+        f"{segredo} (texto solto no lugar de um achado)",
+        {"titulo": segredo, "gravidade": "apocalipse"},
+        {"titulo": "Backup só local", "gravidade": "baixa"},
+    ]}))
     with caplog.at_level("WARNING", logger="pmo.vigia"):
-        assert analista.analisar(_sinais_base(), [])[0] is None
-    assert "achados.0.gravidade literal_error" in caplog.text and segredo not in caplog.text
+        resposta, situacao = analista.analisar(_sinais_base(), [])
+    assert situacao.startswith("analisado por")
+    assert [a.titulo for a in resposta.achados] == ["Disco quase cheio", "Backup só local"]
+    assert "2 achado(s) da IA fora do formato" in caplog.text
+    assert "achados.1 model_type" in caplog.text and "achados.2.gravidade literal_error" in caplog.text
+    assert segredo not in caplog.text
 
 
 def test_groq_fora_do_ar_nao_derruba_a_rodada(monkeypatch):

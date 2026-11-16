@@ -23,7 +23,10 @@ TETO_DE_QUERIES = 8
 # Rotas que juntam muita coisa numa resposta só: orçamento próprio (ainda fixo, independente de N).
 TETO_POR_ROTA = {
     "/projetos/{id}/pilares": 9,     # + pilares e quem avaliou cada um
-    "/projetos/{id}/relatorio": 16,  # indicadores, pilares, histórico, comentários (autores e tarefas) e auditoria
+    # indicadores, pilares (+ financeiro do orçamento), orçamento (itens, lançamentos, curva), marcos,
+    # histórico, comentários (autores e tarefas) e auditoria
+    "/projetos/{id}/relatorio": 24,
+    "/projetos/{id}/orcamento": 12,  # itens, lançamentos por item e por dia, indicadores do cronograma
 }
 
 
@@ -56,6 +59,7 @@ def montar(client, criar_usuario, login, brasil_api) -> Callable[[int], Dict]:
         pilares = [x["id"] for x in p["pilares"]]
         for pilar in pilares:  # status com autor: o PDF e a lista mostram quem avaliou
             client.patch(f"/projetos/{pid}/pilares/{pilar}", json={"farol": "verde", "status_texto": "ok"}, headers=h)
+        anterior = None
         for i in range(n):
             pessoa = criar_usuario(f"p{contador['projetos']}-{i}@empresa.com.br")
             client.post(f"/projetos/{pid}/membros", json={"usuario_id": pessoa.id, "papel": "editor"}, headers=h)
@@ -64,6 +68,16 @@ def montar(client, criar_usuario, login, brasil_api) -> Callable[[int], Dict]:
                 "data_inicio": "2026-03-02", "data_fim": "2026-03-06", "percentual_conclusao": i % 101,
             }, headers=h).json()
             client.post(f"/projetos/{pid}/comentarios", json={"texto": f"c{i}", "tarefa_id": tarefa["id"]}, headers=h)
+            client.post(f"/projetos/{pid}/marcos", json={"titulo": f"Marco {i}", "data": f"2026-03-{1 + i % 28:02d}"}, headers=h)
+            item = client.post(f"/projetos/{pid}/orcamento/itens", json={
+                "descricao": f"Item {i}", "valor_orcado": "1000.00", "pilar_id": pilares[i % len(pilares)]}, headers=h).json()
+            client.post(f"/projetos/{pid}/orcamento/lancamentos", json={
+                "item_id": item["id"], "valor": "10.00", "data": f"2026-{1 + i % 12:02d}-10", "descricao": "NF"}, headers=h)
+            if anterior is not None:
+                client.post(f"/projetos/{pid}/dependencias", json={
+                    "predecessora_id": anterior, "sucessora_id": tarefa["id"], "tipo": "fim_apos_fim", "ajustar_datas": False,
+                }, headers=h)
+            anterior = tarefa["id"]
         return {"id": pid, "h": h}
 
     return _montar
@@ -75,6 +89,11 @@ ROTAS = [
     "/projetos/{id}/exportar",
     "/projetos/{id}/pilares",
     "/projetos/{id}/relatorio",
+    "/projetos/{id}/dependencias",
+    "/projetos/{id}/marcos",
+    "/projetos/{id}/orcamento",
+    "/projetos/{id}/orcamento/lancamentos?limite=100",
+    "/projetos/{id}/orcamento/exportar",
     "/projetos/{id}/membros",
     "/projetos/{id}/comentarios?limite=100",
     "/projetos/{id}/historico?limite=100",

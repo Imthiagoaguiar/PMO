@@ -224,3 +224,10 @@ def test_headers_de_seguranca(client):
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["x-frame-options"] == "DENY"
     assert r.headers["cache-control"] == "no-store"
+
+
+def test_testes_nunca_usam_as_integracoes_reais_do_env():
+    """Com chaves no .env, a suíte mandaria e-mails de verdade e gastaria tokens (aconteceu em 15/11/2026)."""
+    from app.config import settings
+
+    assert not settings.resend_api_key and not settings.groq_api_key and not settings.clerk_emissor

@@ -93,7 +93,7 @@ def test_nulos_no_xlsx(importar, banco_vazio):
 def test_todos_os_erros_vem_de_uma_vez_e_nada_e_gravado(importar, banco_vazio):
     """Uma linha ruim no meio de 200 boas: nenhuma tarefa entra (tudo-ou-nada)."""
     linhas = ["Iniciação;Tarefa {i}".format(i=i) for i in range(200)]
-    linhas[50] = "Fase Inventada;Tarefa ruim"
+    linhas[50] = "Fase com um nome comprido demais para caber no limite de cinquenta;Tarefa ruim"
     linhas[120] = "Execução;"
     erros = _erros(importar(("Fase;Descrição\n" + "\n".join(linhas) + "\n").encode()))
     assert [e.split(":")[0] for e in erros] == ["Linha 52", "Linha 122"]

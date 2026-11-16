@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import auditoria, tempo
+from app import auditoria, dependencias, tempo
 from app.database import get_db
 from app.integracoes.feriados import calcular_data_fim, proximo_dia_util
 from app.deps import (
@@ -157,6 +157,18 @@ def atualizar_tarefa(
         _validar_responsavel(projeto, alteracoes["responsavel_id"])
     if "pilar_id" in alteracoes:
         _validar_pilar(projeto, alteracoes["pilar_id"])
+    novo_percentual = alteracoes.get("percentual_conclusao")
+    if novo_percentual is not None and novo_percentual != tarefa.percentual_conclusao \
+            and dependencias.tem_dependencias(db, tarefa.id):
+        # Em fila com quem mexe nas dependências do projeto: "A reaberta" e "B avançada" ao mesmo
+        # tempo não passam as duas.
+        dependencias.travar_projeto(db, projeto)
+        db.refresh(tarefa)
+        conferir_versao(tarefa, payload.versao)
+        try:
+            dependencias.conferir_avanco(db, tarefa, novo_percentual)
+        except dependencias.RegraDependencia as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     diff = auditoria.aplicar_alteracoes(tarefa, alteracoes)
 

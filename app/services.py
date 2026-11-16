@@ -21,6 +21,7 @@ from app.config import settings
 from app.integracoes.feriados import calcular_data_fim, proximo_dia_util
 from app.models import (
     FASES_WATERFALL,
+    MAX_FASES,
     MAX_PILARES,
     PILARES_PADRAO,
     Fase,
@@ -33,6 +34,7 @@ from app.models import (
     RefreshToken,
     Tarefa,
     Usuario,
+    chave_da_fase,
     chave_do_pilar,
 )
 from app.schemas import FaseIndicadores, FaseNova, PilarRead, ProjetoIndicadores, TarefaPlanilha, UsuarioResumo
@@ -47,6 +49,7 @@ logger = logging.getLogger(__name__)
 # A planilha é processada pelo worker da fila (app/importacao.py), não dentro da requisição.
 MAX_LINHAS = settings.importacao_max_linhas
 LOTE_DE_INSERCAO = 2_000
+TAMANHO_TITULO_FASE = 50  # = Fase.titulo
 # .xlsx é um ZIP: um arquivo pequeno pode "explodir" ao descompactar (zip bomb).
 MAX_XLSX_DESCOMPACTADO = 400 * 1024 * 1024  # 100 mil linhas cabem com folga
 
@@ -90,10 +93,11 @@ def criar_projeto_com_fases(
     nome_projeto: str,
     orcamento_aprovado: Optional[Decimal] = None,
     data_inicio: Optional[date] = None,
+    modelo_fases: str = "waterfall",
 ) -> Projeto:
     """
-    Cria o projeto já com as 5 fases do Waterfall; o criador vira dono e membro.
-    Não faz commit (responsabilidade de quem chama).
+    Cria o projeto com as 5 fases do Waterfall (modelo "waterfall") ou sem fases ("em_branco");
+    o criador vira dono e membro. Não faz commit (responsabilidade de quem chama).
     """
     projeto = Projeto(
         nome_projeto=nome_projeto,
@@ -101,39 +105,56 @@ def criar_projeto_com_fases(
         data_inicio=data_inicio,
         dono=dono,
     )
-    projeto.fases = [
-        Fase(titulo=titulo, ordem_sequencia=ordem)
-        for ordem, titulo in enumerate(FASES_WATERFALL, start=1)
-    ]
+    titulos = FASES_WATERFALL if modelo_fases == "waterfall" else ()
+    projeto.fases = [Fase(titulo=titulo, ordem_sequencia=ordem) for ordem, titulo in enumerate(titulos, start=1)]
     projeto.membros = [ProjetoMembro(usuario=dono, papel=PapelProjeto.EDITOR)]
     projeto.pilares = [Pilar(nome=nome, ordem=i) for i, nome in enumerate(PILARES_PADRAO)]
     db.add(projeto)
     return projeto
 
 
+def titulo_de_fase(texto: str) -> str:
+    """Espaços repetidos viram um só; o tamanho é validado por quem chama."""
+    return " ".join(texto.split())
+
+
+def garantir_fases(projeto: Projeto, titulos: List[str]) -> Dict[str, Fase]:
+    """
+    {chave: fase} com as fases que o projeto já tem + as que faltam (criadas no fim, na ordem dada).
+    "execucao" encontra "Execução": a comparação é sem acento, caixa e espaços.
+    """
+    por_chave = {f.titulo_chave: f for f in projeto.fases}
+    proxima = max((f.ordem_sequencia for f in projeto.fases), default=0) + 1
+    for titulo in titulos:
+        chave = chave_da_fase(titulo)
+        if chave not in por_chave:
+            fase = Fase(titulo=titulo_de_fase(titulo), ordem_sequencia=proxima)
+            projeto.fases.append(fase)
+            por_chave[chave] = fase
+            proxima += 1
+    return por_chave
+
+
 def adicionar_cronograma(projeto: Projeto, fases: List[FaseNova], inicio: Optional[date]) -> int:
     """
-    Distribui as tarefas nas fases e encadeia as datas na ordem do Waterfall: cada tarefa com
-    duração começa no dia útil seguinte ao fim da anterior (pulando fins de semana e feriados).
-    Tarefas sem duração entram sem datas e não empurram o cronograma. Retorna o total de tarefas.
+    Distribui as tarefas nas fases (criando as que o projeto ainda não tem) e encadeia as datas na
+    ordem das fases: cada tarefa com duração começa no dia útil seguinte ao fim da anterior (pulando
+    fins de semana e feriados). Tarefas sem duração entram sem datas e não empurram o cronograma.
     """
-    fases_por_titulo = {f.titulo: f for f in projeto.fases}
-    ordem = {titulo: i for i, titulo in enumerate(FASES_WATERFALL)}
+    por_chave = garantir_fases(projeto, [f.fase for f in fases])
+    posicao = {f.titulo_chave: f.ordem_sequencia for f in projeto.fases}
     cursor = inicio
     total = 0
-    for fase in sorted(fases, key=lambda f: ordem[f.fase]):
+    for fase in sorted(fases, key=lambda f: posicao[chave_da_fase(f.fase)]):
         for nova in fase.tarefas:
             tarefa = Tarefa(descricao=nova.descricao, responsavel=nova.responsavel)
             if nova.duracao_dias_uteis is not None and cursor is not None:
                 tarefa.data_inicio = proximo_dia_util(cursor)
                 tarefa.data_fim = calcular_data_fim(tarefa.data_inicio, nova.duracao_dias_uteis)
                 cursor = tarefa.data_fim + timedelta(days=1)
-            fases_por_titulo[fase.fase].tarefas.append(tarefa)
+            por_chave[chave_da_fase(fase.fase)].tarefas.append(tarefa)
             total += 1
     return total
-
-
-# ---------- Sessões ----------
 
 
 def derrubar_sessoes(db: Session, usuario: Usuario) -> None:
@@ -254,14 +275,16 @@ def _ler_csv(conteudo: bytes) -> pd.DataFrame:
     raise PlanilhaInvalida("Codificação do CSV não reconhecida. Salve como UTF-8.")
 
 
-def validar_tarefas(df: pd.DataFrame) -> List[Tuple[int, TarefaPlanilha]]:
+def validar_tarefas(df: pd.DataFrame) -> List[Tuple[str, TarefaPlanilha]]:
     """
-    Valida todas as linhas e retorna (ordem_da_fase, tarefa).
+    Valida todas as linhas e retorna (chave_da_fase, tarefa).
     Acumula os erros de todas as linhas para o usuário corrigir a planilha de uma vez só.
+    A coluna Fase aceita os nomes do Waterfall e também fases próprias (criadas na ordem em que aparecem).
     """
-    ordem_por_fase = {normalizar(t): i for i, t in enumerate(FASES_WATERFALL, start=1)}
-    validas: List[Tuple[int, TarefaPlanilha]] = []
+    validas: List[Tuple[str, TarefaPlanilha]] = []
     erros: List[str] = []
+    padrao = {chave_da_fase(t) for t in FASES_WATERFALL}
+    novas: Dict[str, str] = {}  # chave -> título, na ordem em que aparecem
 
     for indice, registro in zip(df.index, df.to_dict("records")):
         linha = int(indice) + 2  # +1 do cabeçalho, +1 porque a planilha começa em 1
@@ -272,30 +295,34 @@ def validar_tarefas(df: pd.DataFrame) -> List[Tuple[int, TarefaPlanilha]]:
             erros.extend(f"Linha {linha}: {_formatar_erro(e)}" for e in exc.errors())
             continue
 
-        ordem = ordem_por_fase.get(normalizar(tarefa.fase))
-        if ordem is None:
-            erros.append(
-                f"Linha {linha}: fase '{tarefa.fase}' inválida. "
-                f"Valores aceitos: {', '.join(FASES_WATERFALL)}."
-            )
+        titulo = titulo_de_fase(tarefa.fase)
+        chave = chave_da_fase(titulo)
+        if not chave or len(titulo) > TAMANHO_TITULO_FASE:
+            erros.append(f"Linha {linha}: nome de fase inválido (de 1 a {TAMANHO_TITULO_FASE} caracteres).")
             continue
-
-        validas.append((ordem, tarefa))
+        if chave not in padrao and chave not in novas:
+            novas[chave] = titulo
+        tarefa.fase = titulo
+        validas.append((chave, tarefa))
 
     if erros:
         raise PlanilhaInvalida("A planilha contém erros de validação.", erros)
-
-    padrao = {chave_do_pilar(n) for n in PILARES_PADRAO}
-    novos = {chave_do_pilar(t.pilar) for _, t in validas if t.pilar} - padrao
-    if len(padrao) + len(novos) > MAX_PILARES:
+    if len(padrao) + len(novas) > MAX_FASES:
         raise PlanilhaInvalida(
-            f"A planilha tem {len(novos)} pilares além dos padrão; o limite é {MAX_PILARES} pilares por projeto."
+            f"A planilha tem {len(novas)} fases além das 5 do Waterfall; o limite é {MAX_FASES} fases por projeto."
+        )
+
+    pilares_padrao = {chave_do_pilar(n) for n in PILARES_PADRAO}
+    pilares_novos = {chave_do_pilar(t.pilar) for _, t in validas if t.pilar} - pilares_padrao
+    if len(pilares_padrao) + len(pilares_novos) > MAX_PILARES:
+        raise PlanilhaInvalida(
+            f"A planilha tem {len(pilares_novos)} pilares além dos padrão; o limite é {MAX_PILARES} pilares por projeto."
         )
     return validas
 
 
 def gravar_tarefas_em_lote(
-    db: Session, projeto: Projeto, tarefas: List[Tuple[int, TarefaPlanilha]],
+    db: Session, projeto: Projeto, tarefas: List[Tuple[str, TarefaPlanilha]],
     ao_progredir: Optional[Callable[[int, int], None]] = None,
 ) -> None:
     """
@@ -303,23 +330,25 @@ def gravar_tarefas_em_lote(
     por linha: 100 mil linhas cabem em segundos. Espera o projeto já com id (flush).
     Coluna Pilar: "ti" casa com "TI"; um nome que o projeto não tem vira um pilar novo.
     """
-    fases_por_ordem = {f.ordem_sequencia: f.id for f in projeto.fases}
+    # Fases da planilha que o projeto ainda não tem: criadas no fim, na ordem em que aparecem.
+    garantir_fases(projeto, list(dict.fromkeys(dados.fase for _, dados in tarefas)))
     pilares = {chave_do_pilar(p.nome): p for p in projeto.pilares}
     for _, dados in tarefas:
         if dados.pilar and chave_do_pilar(dados.pilar) not in pilares:
             pilar = Pilar(nome=" ".join(dados.pilar.split())[:60], ordem=len(pilares))
             pilares[chave_do_pilar(dados.pilar)] = pilar
             projeto.pilares.append(pilar)
-    db.flush()  # ids dos pilares novos
+    db.flush()  # ids das fases e dos pilares novos
+    fases_por_chave = {f.titulo_chave: f.id for f in projeto.fases}
 
     linhas = [
         {
             **dados.model_dump(exclude={"fase", "pilar"}),
-            "fase_id": fases_por_ordem[ordem],
+            "fase_id": fases_por_chave[chave],
             "pilar_id": pilares[chave_do_pilar(dados.pilar)].id if dados.pilar else None,
             "versao": 1,
         }
-        for ordem, dados in tarefas
+        for chave, dados in tarefas
     ]
     for inicio in range(0, len(linhas), LOTE_DE_INSERCAO):
         db.execute(insert(Tarefa), linhas[inicio: inicio + LOTE_DE_INSERCAO])
@@ -377,12 +406,13 @@ def calcular_indicadores(db: Session, projeto: Projeto, hoje: Optional[date] = N
     total = sum(a["total"] for a in por_fase.values())
     inicios = [a["inicio"] for a in por_fase.values() if a["inicio"]]
     fins = [a["fim"] for a in por_fase.values() if a["fim"]]
-    # Waterfall: a fase atual é a primeira (na ordem) que ainda tem trabalho pendente.
+    # Seguindo a ordem (Waterfall): a fase atual é a primeira, na ordem, com trabalho pendente.
+    # Sem seguir a ordem, as fases andam em paralelo e não existe "fase atual".
     fase_atual = next(
         (f.titulo for f in projeto.fases
          if (a := por_fase.get(f.id)) and a["concluidas"] < a["total"]),
         None,
-    )
+    ) if projeto.seguir_ordem_fases else None
     return ProjetoIndicadores(
         projeto_id=projeto.id,
         percentual_conclusao=_media(sum(a["soma"] for a in por_fase.values()), total),
@@ -410,10 +440,14 @@ def calcular_pilares(db: Session, projeto: Projeto, pilares: List[Pilar], hoje: 
     hoje = hoje or tempo.hoje()
     por_pilar = _agregados(db, Tarefa.pilar_id, and_(Fase.projeto_id == projeto.id, Tarefa.pilar_id.is_not(None)), hoje)
     vazio = {"total": 0, "concluidas": 0, "atrasadas": 0, "soma": 0}
+    from app import orcamento  # importa services: aqui dentro evita o ciclo
+
+    do_orcamento = orcamento.financeiro_por_pilar(db, projeto.id)
     resultado = []
     for p in pilares:
         a = por_pilar.get(p.id, vazio)
-        orcado, realizado = p.valor_orcado, p.valor_realizado
+        # Pilar com itens na aba Orçamento: o financeiro vem de lá (itens x lançamentos), não do campo manual.
+        orcado, realizado = do_orcamento.get(p.id, (p.valor_orcado, p.valor_realizado))
         resultado.append(PilarRead(
             id=p.id, nome=p.nome, ordem=p.ordem, farol=p.farol, status_texto=p.status_texto,
             status_atualizado_em=p.status_atualizado_em,
@@ -423,6 +457,7 @@ def calcular_pilares(db: Session, projeto: Projeto, pilares: List[Pilar], hoje: 
             execucao_financeira=(
                 round(float(realizado) / float(orcado) * 100, 1) if orcado and realizado is not None else None
             ),
+            financeiro_do_orcamento=p.id in do_orcamento,
             total_tarefas=a["total"], tarefas_concluidas=a["concluidas"], tarefas_atrasadas=a["atrasadas"],
             percentual_conclusao=_media(a["soma"], a["total"]),
             versao=p.versao,
@@ -464,7 +499,7 @@ LARGURAS_EXPORTACAO = (16, 60, 14, 14, 28, 14, 18)
 LOTE_EXPORTACAO = 5000  # linhas lidas do banco por vez: a memória não cresce com o tamanho do projeto
 
 
-def _texto_seguro(planilha: Any, valor: Optional[str]) -> Any:
+def celula_texto_seguro(planilha: Any, valor: Optional[str]) -> Any:
     """
     Grava como TEXTO, sem alterar o conteúdo, o que poderia virar fórmula (Formula Injection):
     o Excel mostra "=SOMA(A1)" em vez de calcular, e "- revisar contrato" volta igual na
@@ -479,7 +514,7 @@ def _texto_seguro(planilha: Any, valor: Optional[str]) -> Any:
     return celula
 
 
-def _data(planilha: Any, valor: Optional[date]) -> Any:
+def celula_data(planilha: Any, valor: Optional[date]) -> Any:
     if valor is None:
         return None
     celula = WriteOnlyCell(planilha, value=valor)
@@ -515,9 +550,9 @@ def exportar_planilha(db: Session, projeto: Projeto) -> bytes:
     planilha.append(COLUNAS_EXPORTACAO)
     for fase, descricao, inicio, fim, responsavel, percentual, pilar in db.execute(consulta):
         planilha.append([
-            _texto_seguro(planilha, fase), _texto_seguro(planilha, descricao),
-            _data(planilha, inicio), _data(planilha, fim),
-            _texto_seguro(planilha, responsavel), percentual, _texto_seguro(planilha, pilar),
+            celula_texto_seguro(planilha, fase), celula_texto_seguro(planilha, descricao),
+            celula_data(planilha, inicio), celula_data(planilha, fim),
+            celula_texto_seguro(planilha, responsavel), percentual, celula_texto_seguro(planilha, pilar),
         ])
 
     buffer = io.BytesIO()

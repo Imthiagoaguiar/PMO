@@ -30,6 +30,25 @@
   --fase-3: oklch(0.65 0.15 160);
   --fase-4: oklch(0.72 0.15 75);
   --fase-5: oklch(0.6 0.03 255);
+
+  /* Gráficos do orçamento: validados (CVD e contraste) com o validador de paleta.
+     Realizado = azul; orçado/planejado = laranja, em todos os gráficos. */
+  --serie-realizado: #2a78d6;
+  --serie-planejado: #eb6834;
+
+  /* Marcos da linha do tempo (as mesmas do PDF: app/relatorio.py, COR_MARCO) */
+  --marco-vermelho: #dc2626;
+  --marco-laranja: #ea580c;
+  --marco-amarelo: #ca8a04;
+  --marco-verde: #16a34a;
+  --marco-azul: #2563eb;
+  --marco-roxo: #7c3aed;
+  --marco-cinza: #64748b;
+}
+
+.dark {
+  --serie-realizado: #3987e5;
+  --serie-planejado: #d95926;
 }
 
 @theme inline {
@@ -60,6 +79,8 @@
   --color-fase-3: var(--fase-3);
   --color-fase-4: var(--fase-4);
   --color-fase-5: var(--fase-5);
+  --color-serie-realizado: var(--serie-realizado);
+  --color-serie-planejado: var(--serie-planejado);
 }
 
 @layer base {

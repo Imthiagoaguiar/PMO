@@ -10,6 +10,7 @@ import { Cronograma } from "@/components/projeto/Cronograma"
 import { Historico } from "@/components/projeto/Historico"
 import { LinhaDoTempo } from "@/components/projeto/LinhaDoTempo"
 import { Membros } from "@/components/projeto/Membros"
+import { Orcamento } from "@/components/projeto/Orcamento"
 import { Pilares } from "@/components/projeto/Pilares"
 import {
   AlertDialog,
@@ -286,7 +287,10 @@ export function ProjetoDetalhe() {
           <Indicador
             titulo="Tarefas concluídas"
             valor={`${ind.tarefas_concluidas} de ${ind.total_tarefas}`}
-            detalhe={ind.fase_atual ? `Fase atual: ${ind.fase_atual}` : ind.total_tarefas ? "Todas as fases concluídas" : "Sem tarefas ainda"}
+            detalhe={
+              !p.seguir_ordem_fases ? "Fases em paralelo"
+              : ind.fase_atual ? `Fase atual: ${ind.fase_atual}` : ind.total_tarefas ? "Todas as fases concluídas" : "Sem tarefas ainda"
+            }
           />
           <Indicador titulo="Tarefas atrasadas" valor={String(ind.tarefas_atrasadas)} destaque={ind.tarefas_atrasadas > 0} detalhe="Prazo vencido e não concluídas" />
           <Indicador
@@ -301,6 +305,7 @@ export function ProjetoDetalhe() {
         <TabsList className="mb-4">
           <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
           <TabsTrigger value="pilares">Pilares</TabsTrigger>
+          <TabsTrigger value="orcamento">Orçamento</TabsTrigger>
           <TabsTrigger value="linha">Linha do tempo</TabsTrigger>
           <TabsTrigger value="comentarios">Comentários</TabsTrigger>
           <TabsTrigger value="membros">Membros</TabsTrigger>
@@ -312,8 +317,11 @@ export function ProjetoDetalhe() {
         <TabsContent value="pilares">
           <Pilares projetoId={p.id} podeEditar={podeEditarCronograma} />
         </TabsContent>
+        <TabsContent value="orcamento">
+          <Orcamento projeto={p} podeEditar={podeEditarCronograma} />
+        </TabsContent>
         <TabsContent value="linha">
-          <LinhaDoTempo projeto={p} />
+          <LinhaDoTempo projeto={p} podeEditar={podeEditarCronograma} />
         </TabsContent>
         <TabsContent value="comentarios" className="max-w-3xl">
           <Comentarios projeto={p} />

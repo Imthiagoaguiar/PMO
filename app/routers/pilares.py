@@ -15,7 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import auditoria, services
+from app import auditoria, orcamento, services
 from app.database import get_db
 from app.deps import (
     IdPath,
@@ -114,6 +114,17 @@ def atualizar_pilar(
     conferir_versao(pilar, alteracoes.pop("versao", None))
     if "nome" in alteracoes:
         _exigir_nome_livre(db, projeto, alteracoes["nome"], ignorar_id=pilar.id)
+    automatico = orcamento.financeiro_por_pilar(db, projeto.id).get(pilar.id) if (
+        {"valor_orcado", "valor_realizado"} & set(alteracoes)) else None
+    if automatico is not None:
+        # O financeiro vem da aba Orçamento. O formulário pode reenviar os mesmos valores junto com o
+        # farol: iguais são ignorados; diferentes, recusados (senão a mudança sumiria sem aviso).
+        for campo, atual in zip(("valor_orcado", "valor_realizado"), automatico):
+            if campo in alteracoes and alteracoes.pop(campo) != atual:
+                raise HTTPException(
+                    status_code=422,
+                    detail="O orçado e o realizado deste pilar vêm da aba Orçamento (itens ligados a ele). Altere por lá.",
+                )
 
     diff = auditoria.aplicar_alteracoes(pilar, alteracoes)
     if diff:

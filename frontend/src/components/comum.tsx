@@ -32,8 +32,11 @@ export const NOMES_PAPEL_PROJETO: Record<PapelProjeto, string> = {
   visualizador: "Visualizador",
 }
 
-/** Cor da fase pela posição no Waterfall (1 a 5), definida no index.css. */
+/** Cor da fase pela posição (index.css). Mais de 5 fases: as cores se repetem. */
 export const COR_FASE = ["bg-fase-1", "bg-fase-2", "bg-fase-3", "bg-fase-4", "bg-fase-5"]
+export function corFase(indice: number): string {
+  return COR_FASE[indice % COR_FASE.length]
+}
 
 export function Carregando({ texto = "Carregando..." }: { texto?: string }) {
   return (

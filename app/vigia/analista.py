@@ -94,8 +94,25 @@ class RespostaIA(BaseModel):
 
     @field_validator("achados", mode="before")
     @classmethod
-    def _no_maximo_15(cls, valor: Any) -> Any:
-        return valor[:15] if isinstance(valor, list) else valor
+    def _so_os_achados_validos(cls, valor: Any) -> Any:
+        """
+        Um item ruim (às vezes o modelo põe um texto solto na lista, ou uma gravidade que não existe)
+        é descartado sozinho: o resumo e os outros achados continuam valendo.
+        """
+        if not isinstance(valor, list):
+            return valor
+        validos, problemas = [], []
+        for posicao, item in enumerate(valor):
+            try:
+                validos.append(AchadoIA.model_validate(item))
+            except ValidationError as exc:
+                problemas += [f"achados.{posicao}.{'.'.join(map(str, e['loc']))} {e['type']}".replace(". ", " ")
+                              for e in exc.errors()[:2]]
+        if problemas:
+            # Só QUAIS campos falharam, nunca o conteúdo.
+            logger.warning("Vigia: %d achado(s) da IA fora do formato, descartado(s) (%s)",
+                           len(valor) - len(validos), "; ".join(problemas[:5]))
+        return validos[:15]
 
 
 def anonimizar(valor: Any) -> Any:

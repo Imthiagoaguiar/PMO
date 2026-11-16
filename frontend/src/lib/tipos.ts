@@ -76,6 +76,8 @@ export interface ProjetoResumo {
   data_inicio: string | null
   status: StatusProjeto
   dono_id: number
+  /** true: a fase atual é a primeira, na ordem, com pendência; false: fases em paralelo. */
+  seguir_ordem_fases: boolean
   /** Bloqueio otimista: enviar de volta no PATCH (409 se outra pessoa salvou antes). */
   versao: number
 }
@@ -104,6 +106,8 @@ export interface Pilar extends PilarResumo {
   valor_realizado: string | null
   desvio: string | null
   execucao_financeira: number | null
+  /** true: orçado/realizado vêm da aba Orçamento (não se editam no pilar). */
+  financeiro_do_orcamento: boolean
   total_tarefas: number
   tarefas_concluidas: number
   tarefas_atrasadas: number
@@ -235,4 +239,86 @@ export interface VigiaSituacao {
   intervalo_minutos: number
   ultima_rodada_em: string | null
   atrasado: boolean
+}
+
+// ---------- Dependências, marcos e orçamento ----------
+
+export type TipoDependencia = "inicio_apos_fim" | "fim_apos_fim"
+
+export interface Dependencia {
+  id: number
+  predecessora_id: number
+  sucessora_id: number
+  tipo: TipoDependencia
+}
+
+export type FormaMarco = "pin" | "bandeira" | "circulo" | "quadrado" | "triangulo" | "losango" | "estrela" | "faixa"
+export type CorMarco = "vermelho" | "laranja" | "amarelo" | "verde" | "azul" | "roxo" | "cinza"
+
+export interface Marco {
+  id: number
+  titulo: string
+  descricao: string | null
+  data: string
+  data_fim: string | null
+  forma: FormaMarco
+  cor: CorMarco
+  versao: number
+}
+
+export type CategoriaOrcamento = "capex" | "opex"
+
+export interface ItemOrcamento {
+  id: number
+  descricao: string
+  categoria: CategoriaOrcamento
+  pilar_id: number | null
+  pilar_nome: string | null
+  valor_orcado: string
+  valor_realizado: string
+  saldo: string
+  execucao: number | null
+  estourado: boolean
+  lancamentos: number
+  versao: number
+}
+
+export interface Lancamento {
+  id: number
+  item_id: number
+  data: string
+  descricao: string
+  documento: string | null
+  valor: string
+  criado_por: UsuarioResumo | null
+  criado_em: string
+}
+
+export interface TotalOrcamento {
+  chave: string
+  nome: string
+  orcado: string
+  realizado: string
+}
+
+export interface PontoCurva {
+  mes: string
+  realizado_no_mes: string
+  realizado_acumulado: string
+  planejado_acumulado: string | null
+}
+
+export interface ResumoOrcamento {
+  orcamento_aprovado: string | null
+  total_orcado: string
+  total_realizado: string
+  saldo: string
+  execucao: number | null
+  avanco_fisico: number
+  previsao_final: string | null
+  itens: ItemOrcamento[]
+  por_categoria: TotalOrcamento[]
+  por_pilar: TotalOrcamento[]
+  curva: PontoCurva[]
+  alertas: { nivel: "alto" | "medio" | "info"; mensagem: string }[]
 }

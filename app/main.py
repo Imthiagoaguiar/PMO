@@ -10,7 +10,7 @@ from app.auditoria import ip_requisicao
 from app.config import settings
 from app.database import engine
 from app.limites import KB, MB, LimiteCorpo, RecusaNul
-from app.routers import auditoria, auth, comentarios, importacoes, pilares, projetos, tarefas, usuarios, vigia
+from app.routers import auditoria, auth, comentarios, dependencias, fases, importacoes, marcos, orcamento, pilares, projetos, tarefas, usuarios, vigia
 
 EM_PRODUCAO = settings.ambiente == "prod"
 
@@ -107,6 +107,10 @@ app.include_router(tarefas.router)
 app.include_router(tarefas.minhas_router)
 app.include_router(comentarios.router)
 app.include_router(pilares.router)
+app.include_router(fases.router)
+app.include_router(dependencias.router)
+app.include_router(marcos.router)
+app.include_router(orcamento.router)
 app.include_router(auditoria.router)
 app.include_router(vigia.router)
 app.include_router(importacoes.router)

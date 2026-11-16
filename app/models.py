@@ -19,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
@@ -26,7 +27,16 @@ from app.database import Base
 from app.texto import normalizar
 
 # Fases padrão do Waterfall, na ordem em que são criadas (ordem_sequencia = posição + 1).
+# É só o MODELO inicial: o editor renomeia, reordena, exclui e cria outras fases.
 FASES_WATERFALL = ("Iniciação", "Planejamento", "Execução", "Monitoramento", "Encerramento")
+MAX_FASES = 20
+MAX_MARCOS = 100
+MAX_ITENS_ORCAMENTO = 200
+
+
+def chave_da_fase(titulo: str) -> str:
+    """Nome comparável: "Execução", "execucao" e " EXECUÇÃO " são a mesma fase."""
+    return "".join(normalizar(titulo).split())[:50]
 
 
 def _enum(classe: Type[enum.Enum], tamanho: int = 20) -> Enum:
@@ -61,6 +71,37 @@ MAX_PILARES = 20
 def chave_do_pilar(nome: str) -> str:
     """Nome comparável: sem acento, sem caixa, sem espaços ("Jurídico " == "juridico")."""
     return "".join(normalizar(nome).split())[:60]
+
+
+class TipoDependencia(str, enum.Enum):
+    INICIO_APOS_FIM = "inicio_apos_fim"  # B só começa depois que A terminar
+    FIM_APOS_FIM = "fim_apos_fim"        # C só termina depois que A terminar
+
+
+class FormaMarco(str, enum.Enum):
+    PIN = "pin"
+    BANDEIRA = "bandeira"
+    CIRCULO = "circulo"
+    QUADRADO = "quadrado"
+    TRIANGULO = "triangulo"
+    LOSANGO = "losango"
+    ESTRELA = "estrela"
+    FAIXA = "faixa"  # um período (data até data_fim), ex.: congelamento, férias coletivas
+
+
+class CorMarco(str, enum.Enum):
+    VERMELHO = "vermelho"
+    LARANJA = "laranja"
+    AMARELO = "amarelo"
+    VERDE = "verde"
+    AZUL = "azul"
+    ROXO = "roxo"
+    CINZA = "cinza"
+
+
+class CategoriaOrcamento(str, enum.Enum):
+    CAPEX = "capex"  # investimento (equipamento, licença perpétua, obra)
+    OPEX = "opex"    # despesa operacional (serviço, assinatura, horas)
 
 
 class PapelUsuario(str, enum.Enum):
@@ -213,6 +254,9 @@ class Projeto(Base):
     dono_id: Mapped[int] = mapped_column(
         ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False, index=True
     )
+    # True: a "fase atual" é a primeira, na ordem, com tarefa pendente (Waterfall). False: as fases
+    # são só agrupamentos, sem sequência (o projeto não segue a ordem).
+    seguir_ordem_fases: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     # Bloqueio otimista: todo UPDATE vira "... WHERE versao = <a que eu li>" e soma 1.
     # Duas pessoas salvando a partir da mesma versão: uma vence, a outra recebe 409.
     versao: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
@@ -233,6 +277,12 @@ class Projeto(Base):
     )
     pilares: Mapped[List["Pilar"]] = relationship(
         back_populates="projeto", cascade="all, delete-orphan", order_by="(Pilar.ordem, Pilar.id)"
+    )
+    marcos: Mapped[List["MarcoLinhaTempo"]] = relationship(
+        back_populates="projeto", cascade="all, delete-orphan", order_by="(MarcoLinhaTempo.data, MarcoLinhaTempo.id)"
+    )
+    itens_orcamento: Mapped[List["ItemOrcamento"]] = relationship(
+        back_populates="projeto", cascade="all, delete-orphan", order_by="(ItemOrcamento.ordem, ItemOrcamento.id)"
     )
 
     __table_args__ = (
@@ -276,6 +326,8 @@ class Fase(Base):
         ForeignKey("projetos.id", ondelete="CASCADE"), nullable=False, index=True
     )
     titulo: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Duas fases com o mesmo nome confundiriam a importação e os relatórios: unicidade no banco.
+    titulo_chave: Mapped[str] = mapped_column(String(50), nullable=False)
     ordem_sequencia: Mapped[int] = mapped_column(Integer, nullable=False)
 
     projeto: Mapped["Projeto"] = relationship(back_populates="fases")
@@ -285,9 +337,15 @@ class Fase(Base):
         order_by="Tarefa.id",
     )
 
+    @validates("titulo")
+    def _definir_chave(self, _campo: str, titulo: str) -> str:
+        self.titulo_chave = chave_da_fase(titulo)
+        return titulo
+
     __table_args__ = (
         # Um projeto não pode ter duas fases na mesma posição.
         UniqueConstraint("projeto_id", "ordem_sequencia", name="uq_fase_projeto_ordem"),
+        UniqueConstraint("projeto_id", "titulo_chave", name="uq_fase_projeto_titulo_chave"),
     )
 
 
@@ -373,6 +431,122 @@ class Pilar(Base):
         CheckConstraint("valor_orcado >= 0", name="ck_pilar_orcado_positivo"),
         CheckConstraint("valor_realizado >= 0", name="ck_pilar_realizado_positivo"),
     )
+
+
+class DependenciaTarefa(Base):
+    """
+    "B depende de A". inicio_apos_fim: B não avança (passa de 0%) antes de A chegar a 100%.
+    fim_apos_fim: B não chega a 100% antes de A. Sem ciclos (A -> B -> A) e dentro do mesmo projeto.
+    """
+
+    __tablename__ = "dependencias_tarefas"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    projeto_id: Mapped[int] = mapped_column(
+        ForeignKey("projetos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    predecessora_id: Mapped[int] = mapped_column(
+        ForeignKey("tarefas.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sucessora_id: Mapped[int] = mapped_column(
+        ForeignKey("tarefas.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tipo: Mapped[TipoDependencia] = mapped_column(
+        _enum(TipoDependencia), default=TipoDependencia.INICIO_APOS_FIM, nullable=False
+    )
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    predecessora: Mapped["Tarefa"] = relationship(foreign_keys=[predecessora_id])
+    sucessora: Mapped["Tarefa"] = relationship(foreign_keys=[sucessora_id])
+
+    __table_args__ = (
+        UniqueConstraint("predecessora_id", "sucessora_id", name="uq_dependencia_par"),
+        CheckConstraint("predecessora_id <> sucessora_id", name="ck_dependencia_nao_circular"),
+    )
+
+
+class MarcoLinhaTempo(Base):
+    """Marco desenhado na linha do tempo: pin, bandeira, forma geométrica ou faixa (período)."""
+
+    __tablename__ = "marcos_linha_tempo"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    projeto_id: Mapped[int] = mapped_column(
+        ForeignKey("projetos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    titulo: Mapped[str] = mapped_column(String(80), nullable=False)
+    descricao: Mapped[Optional[str]] = mapped_column(String(500))
+    data: Mapped[date] = mapped_column(Date, nullable=False)
+    data_fim: Mapped[Optional[date]] = mapped_column(Date)  # só na faixa
+    forma: Mapped[FormaMarco] = mapped_column(_enum(FormaMarco), default=FormaMarco.BANDEIRA, nullable=False)
+    cor: Mapped[CorMarco] = mapped_column(_enum(CorMarco), default=CorMarco.AZUL, nullable=False)
+    criado_por_id: Mapped[Optional[int]] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"))
+    versao: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")  # ver Projeto.versao
+
+    __mapper_args__ = {"version_id_col": versao}
+
+    projeto: Mapped["Projeto"] = relationship(back_populates="marcos")
+
+    __table_args__ = (CheckConstraint("data_fim >= data", name="ck_marco_datas"),)
+
+
+class ItemOrcamento(Base):
+    """Linha do orçamento (ex.: "Licenças do ERP"): o valor orçado. O realizado vem dos lançamentos."""
+
+    __tablename__ = "itens_orcamento"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    projeto_id: Mapped[int] = mapped_column(
+        ForeignKey("projetos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    descricao: Mapped[str] = mapped_column(String(150), nullable=False)
+    categoria: Mapped[CategoriaOrcamento] = mapped_column(
+        _enum(CategoriaOrcamento), default=CategoriaOrcamento.OPEX, nullable=False
+    )
+    # Ligado a um pilar, o orçado/realizado do pilar passa a vir daqui. Excluir o pilar não exclui o item.
+    pilar_id: Mapped[Optional[int]] = mapped_column(ForeignKey("pilares.id", ondelete="SET NULL"), index=True)
+    valor_orcado: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    ordem: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    versao: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")  # ver Projeto.versao
+
+    __mapper_args__ = {"version_id_col": versao}
+
+    projeto: Mapped["Projeto"] = relationship(back_populates="itens_orcamento")
+    pilar: Mapped[Optional["Pilar"]] = relationship()
+    lancamentos: Mapped[List["LancamentoOrcamento"]] = relationship(
+        back_populates="item", cascade="all, delete-orphan", order_by="(LancamentoOrcamento.data, LancamentoOrcamento.id)"
+    )
+
+    __table_args__ = (CheckConstraint("valor_orcado >= 0", name="ck_item_orcado_positivo"),)
+
+
+class LancamentoOrcamento(Base):
+    """Gasto realizado (ou estorno, com valor negativo) numa data, contra um item do orçamento."""
+
+    __tablename__ = "lancamentos_orcamento"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    projeto_id: Mapped[int] = mapped_column(
+        ForeignKey("projetos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("itens_orcamento.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    data: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    descricao: Mapped[str] = mapped_column(String(200), nullable=False)
+    documento: Mapped[Optional[str]] = mapped_column(String(60))  # NF, pedido de compra...
+    valor: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    criado_por_id: Mapped[Optional[int]] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"))
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    item: Mapped["ItemOrcamento"] = relationship(back_populates="lancamentos")
+    criado_por: Mapped[Optional["Usuario"]] = relationship()
+
+    __table_args__ = (CheckConstraint("valor <> 0", name="ck_lancamento_valor_nao_zero"),)
 
 
 # ---------- Colaboração ----------

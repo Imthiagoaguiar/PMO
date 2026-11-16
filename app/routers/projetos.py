@@ -13,7 +13,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from app import auditoria, fila, idempotencia, relatorio, services, tempo
+from app import auditoria, fila, idempotencia, orcamento, relatorio, services, tempo
 from app.config import settings
 from app.routers.importacoes import ler_importacao
 from app.database import get_db
@@ -369,7 +369,7 @@ def exportar_projeto(
     return Response(
         content=conteudo,
         media_type=MIME_XLSX,
-        headers={"Content-Disposition": _content_disposition(projeto.nome_projeto + ".xlsx")},
+        headers={"Content-Disposition": content_disposition(projeto.nome_projeto + ".xlsx")},
     )
 
 
@@ -406,6 +406,8 @@ def relatorio_pdf(
         indicadores=services.calcular_indicadores(db, projeto, hoje),
         pilares=services.calcular_pilares(db, projeto, services.listar_pilares(db, projeto.id), hoje),
         **relatorio.tarefas_da_linha_do_tempo(db, projeto),
+        marcos=list(projeto.marcos),
+        orcamento=orcamento.resumo(db, projeto, hoje),
         historico=historico,
         comentarios=comentarios,
         gerado_por=usuario.nome,
@@ -417,7 +419,7 @@ def relatorio_pdf(
     return Response(
         content=conteudo,
         media_type="application/pdf",
-        headers={"Content-Disposition": _content_disposition(f"Relatório - {projeto.nome_projeto}.pdf")},
+        headers={"Content-Disposition": content_disposition(f"Relatório - {projeto.nome_projeto}.pdf")},
     )
 
 
@@ -587,7 +589,7 @@ def remover_membro(
 # ---------- Helpers ----------
 
 
-def _content_disposition(nome: str) -> str:
+def content_disposition(nome: str) -> str:
     """
     RFC 6266: `filename` só em ASCII (navegadores antigos) e `filename*` com o nome real em UTF-8,
     para "Implantação São Paulo.xlsx" não virar "Implantacao_Sao_Paulo.xlsx".

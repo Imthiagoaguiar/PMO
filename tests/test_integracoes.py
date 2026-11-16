@@ -343,7 +343,7 @@ def test_criar_projeto_com_cronograma_encadeado(client, criar_usuario, login, br
 
 
 @pytest.mark.parametrize("fases, data_inicio", [
-    pytest.param([{"fase": "Fase Inventada", "tarefas": []}], "2026-04-17", id="fase-inexistente"),
+    pytest.param([{"fase": "F" * 51, "tarefas": []}], "2026-04-17", id="fase-com-nome-longo"),
     pytest.param([{"fase": "Iniciação"}, {"fase": "iniciacao"}], "2026-04-17", id="fase-repetida"),
     pytest.param([{"fase": "Iniciação", "tarefas": [{"descricao": "A", "duracao_dias_uteis": 2}]}], None,
                  id="duracao-sem-data-inicio"),

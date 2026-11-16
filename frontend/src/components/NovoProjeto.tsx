@@ -155,6 +155,7 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [aba, setAba] = useState("manual")
+  const [modeloFases, setModeloFases] = useState<"waterfall" | "em_branco">("waterfall")
   const [dados, setDados] = useState<DadosBasicos>(VAZIO)
   const [arquivo, setArquivo] = useState<File | null>(null)
   const [errosPlanilha, setErrosPlanilha] = useState<string[]>([])
@@ -179,6 +180,7 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
     setTexto("")
     setSugestao(null)
     setAba("manual")
+    setModeloFases("waterfall")
     aoFechar()
   }
 
@@ -193,6 +195,8 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
     mutationFn: (fases?: FaseEditavel[]) => {
       const corpo = {
         ...corpoBasico(dados),
+        // A sugestão da IA vem nas fases do Waterfall; só o modo manual escolhe o modelo.
+        modelo_fases: fases ? "waterfall" : modeloFases,
         fases: (fases ?? []).map((f) => ({
           fase: f.fase,
           tarefas: f.tarefas
@@ -203,7 +207,8 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
       const chave = chaves.para("manual:" + JSON.stringify(corpo))
       return api<Projeto>("/projetos/manual", { method: "POST", json: corpo, headers: { "Idempotency-Key": chave } })
     },
-    onSuccess: (p) => concluir(p.id, "Projeto criado com as 5 fases do Waterfall."),
+    onSuccess: (p) =>
+      concluir(p.id, p.fases.length ? `Projeto criado com ${p.fases.length} fases.` : "Projeto criado sem fases: crie as suas no cronograma."),
     onError: notificarErro,
   })
 
@@ -299,7 +304,9 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
         <form onSubmit={enviar} className="grid gap-5">
           <DialogHeader>
             <DialogTitle>Novo projeto</DialogTitle>
-            <DialogDescription>O projeto já nasce com as 5 fases do Waterfall e você como dono.</DialogDescription>
+            <DialogDescription>
+              Por padrão, o projeto nasce com as 5 fases do Waterfall (dá para renomear, reordenar e excluir depois) e você como dono.
+            </DialogDescription>
           </DialogHeader>
 
           <Tabs value={aba} onValueChange={setAba}>
@@ -315,8 +322,29 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="manual" className="pt-4">
+            <TabsContent value="manual" className="grid gap-4 pt-4">
               <CamposBasicos dados={dados} aoMudar={setDados} />
+              <fieldset className="grid gap-2">
+                <legend className="mb-1 text-sm font-medium">Fases</legend>
+                {([
+                  ["waterfall", "Começar com o Waterfall", "Iniciação, Planejamento, Execução, Monitoramento e Encerramento"],
+                  ["em_branco", "Começar em branco", "Você cria as fases com os nomes que fizerem sentido"],
+                ] as const).map(([valor, titulo, detalhe]) => (
+                  <label key={valor} className="flex cursor-pointer items-start gap-2 rounded-md border p-3 text-sm has-[:checked]:border-primary">
+                    <input
+                      type="radio"
+                      name="modelo-fases"
+                      className="mt-0.5"
+                      checked={modeloFases === valor}
+                      onChange={() => setModeloFases(valor)}
+                    />
+                    <span>
+                      <span className="font-medium">{titulo}</span>
+                      <span className="block text-muted-foreground">{detalhe}</span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
             </TabsContent>
 
             <TabsContent value="planilha" className="grid gap-4 pt-4">

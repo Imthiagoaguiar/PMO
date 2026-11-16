@@ -1,9 +1,11 @@
 import { useInfiniteQuery, useMutation } from "@tanstack/react-query"
-import { MessageSquare, Pencil, Plus, Trash2 } from "lucide-react"
+import { CalendarClock, ListOrdered, MessageSquare, Pencil, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { BarraProgresso, COR_FASE } from "@/components/comum"
+import { BarraProgresso, corFase, Vazio } from "@/components/comum"
+import { SeloDependencia, useMapaDependencias, type MapaDependencias } from "@/components/projeto/Dependencias"
+import { GerenciarFases } from "@/components/projeto/Fases"
 import { ComentariosDialog } from "@/components/projeto/Comentarios"
 import { TarefaDialog } from "@/components/projeto/TarefaDialog"
 import {
@@ -46,6 +48,22 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
   const nomes = new Map(membros.map((m) => [m.id, m.nome]))
   const nomesPilares = new Map(projeto.pilares.map((p) => [p.id, p.nome]))
   const [filtroPilar, setFiltroPilar] = useState(TODOS)
+  const [gerenciandoFases, setGerenciandoFases] = useState(false)
+  const dependencias = useMapaDependencias(projeto)
+  const temDependencias = dependencias.porSucessora.size > 0
+
+  const reprogramar = useMutation({
+    mutationFn: () => api<{ reprogramadas: Tarefa[] }>(`/projetos/${projeto.id}/dependencias/reprogramar`, { method: "POST" }),
+    onSuccess: (r) => {
+      atualizar()
+      toast.success(
+        r.reprogramadas.length
+          ? `${fmt.pluralizar(r.reprogramadas.length, "tarefa reprogramada", "tarefas reprogramadas")} para respeitar as dependências.`
+          : "As datas já respeitam todas as dependências.",
+      )
+    },
+    onError: fmt.notificarErro,
+  })
 
   const excluir = useMutation({
     mutationFn: (t: Tarefa) => api(`/projetos/${projeto.id}/tarefas/${t.id}`, { method: "DELETE" }),
@@ -59,8 +77,9 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
 
   return (
     <div className="grid gap-4">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
       {projeto.pilares.length > 0 && (
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2">
           <span className="text-muted-foreground">Pilar:</span>
           <Select value={filtroPilar} onValueChange={setFiltroPilar}>
             <SelectTrigger className="w-52" aria-label="Filtrar por pilar">
@@ -78,6 +97,29 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
           </Select>
         </div>
       )}
+        {!projeto.seguir_ordem_fases && <span className="text-muted-foreground">Fases em paralelo (sem ordem obrigatória)</span>}
+        {podeEditar && (
+          <div className="ml-auto flex gap-2">
+            {temDependencias && (
+              <Button size="sm" variant="outline" onClick={() => reprogramar.mutate()} disabled={reprogramar.isPending}>
+                <CalendarClock /> {reprogramar.isPending ? "Reprogramando..." : "Reprogramar pelas dependências"}
+              </Button>
+            )}
+            <Button size="sm" variant="outline" onClick={() => setGerenciandoFases(true)}>
+              <ListOrdered /> Fases
+            </Button>
+          </div>
+        )}
+      </div>
+      {projeto.fases.length === 0 && (
+        <Vazio titulo="Este projeto ainda não tem fases">
+          {podeEditar ? (
+            <Button size="sm" variant="outline" className="mt-3" onClick={() => setGerenciandoFases(true)}>
+              <Plus /> Criar as fases
+            </Button>
+          ) : "Quem edita o projeto pode criá-las."}
+        </Vazio>
+      )}
       {projeto.fases.map((fase, i) => (
         <CartaoFase
           key={fase.id}
@@ -89,6 +131,7 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
           podeEditar={podeEditar}
           nomes={nomes}
           nomesPilares={nomesPilares}
+          dependencias={dependencias}
           aoCriar={() => setEditando({ fase })}
           aoEditar={(t) => setEditando({ fase, tarefa: t })}
           aoExcluir={setExcluindo}
@@ -104,9 +147,12 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
           pilares={projeto.pilares}
           faseInicial={editando.fase}
           tarefa={editando.tarefa}
+          projeto={projeto}
           aoFechar={() => setEditando(null)}
         />
       )}
+
+      {gerenciandoFases && <GerenciarFases projeto={projeto} aoFechar={() => setGerenciandoFases(false)} />}
 
       {comentando && (
         <ComentariosDialog projeto={projeto} tarefa={comentando} aoFechar={() => setComentando(null)} />
@@ -187,13 +233,14 @@ interface PropsFase {
   podeEditar: boolean
   nomes: Map<number, string>
   nomesPilares: Map<number, string>
+  dependencias: MapaDependencias
   aoCriar: () => void
   aoEditar: (t: Tarefa) => void
   aoExcluir: (t: Tarefa) => void
   aoComentar: (t: Tarefa) => void
 }
 
-function CartaoFase({ projetoId, fase, indice, filtroPilar, indicadores, podeEditar, nomes, nomesPilares, aoCriar, aoEditar, aoExcluir, aoComentar }: PropsFase) {
+function CartaoFase({ projetoId, fase, indice, filtroPilar, indicadores, podeEditar, nomes, nomesPilares, dependencias, aoCriar, aoEditar, aoExcluir, aoComentar }: PropsFase) {
   const ind = indicadores?.fases.find((f) => f.fase_id === fase.id)
   const lista = useTarefasDaFase(projetoId, fase, filtroPilar)
   const tarefas = lista.tarefas
@@ -201,7 +248,7 @@ function CartaoFase({ projetoId, fase, indice, filtroPilar, indicadores, podeEdi
     <Card className="gap-0 py-0">
       <CardHeader className="border-b py-4">
         <CardTitle className="flex items-center gap-2 text-base">
-          <span className={cn("size-3 rounded-full", COR_FASE[indice])} />
+          <span className={cn("size-3 rounded-full", corFase(indice))} />
           {fase.ordem_sequencia}. {fase.titulo}
           {indicadores?.fase_atual === fase.titulo && <Badge variant="secondary">Fase atual</Badge>}
         </CardTitle>
@@ -252,6 +299,7 @@ function CartaoFase({ projetoId, fase, indice, filtroPilar, indicadores, podeEdi
                         {nomesPilares.get(t.pilar_id)}
                       </Badge>
                     )}
+                    <SeloDependencia mapa={dependencias} tarefa={t} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {(t.responsavel_id && nomes.get(t.responsavel_id)) || t.responsavel || "—"}

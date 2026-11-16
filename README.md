@@ -5,13 +5,24 @@ MVP de PMO para projetos Waterfall.
 - `app/` — API: FastAPI + SQLAlchemy (PostgreSQL) + Pandas
 - `frontend/` — React + TypeScript (Vite, Tailwind, shadcn/ui, TanStack Query)
 
-- Projetos com as 5 fases (Iniciação, Planejamento, Execução, Monitoramento, Encerramento), criados manualmente, por planilha (.xlsx/.csv) ou com sugestão de escopo por IA (Groq).
+- Projetos criados manualmente, por planilha (.xlsx/.csv) ou com sugestão de escopo por IA (Groq).
+- **Fases editáveis**: o projeto nasce com as 5 do Waterfall (Iniciação... Encerramento) ou em branco; o editor renomeia,
+  reordena, exclui (escolhendo para onde vão as tarefas) e cria fases, e decide se o projeto segue a ordem delas.
+  A planilha aceita fases próprias (criadas na ordem em que aparecem).
+- **Dependências entre tarefas**: "B só começa depois que A terminar" ou "C só termina depois de A". O sistema bloqueia
+  o avanço que quebraria a regra, recusa ciclos e empurra as datas das sucessoras (dias úteis, em cascata).
 - Login próprio (JWT + refresh token em cookie httpOnly) ou Clerk; papéis admin/gerente/membro e, em cada projeto, editor ou visualizador (vê, exporta e comenta).
 - Importação de planilhas de até 100 mil linhas em segundo plano (fila Redis + RQ), com progresso ao vivo.
 - Auditoria, limite de requisições, exportação para Excel, cálculo de prazos em dias úteis (Brasil API) e e-mails de projeto criado e de redefinição de senha (Resend).
 - **Pilares** (TI, Suprimentos, CAPEX, Pessoas... e outros criados pelo editor): cada tarefa pode pertencer a um pilar;
   o andamento do pilar vem das tarefas, com farol (verde/amarelo/vermelho), texto de situação e orçado x realizado.
-- **Relatório em PDF** do projeto: resumo e indicadores, pilares, linha do tempo (Gantt), histórico e comentários recentes.
+- **Linha do tempo com marcos**: pins, bandeiras, formas geométricas e períodos (ex.: pré-entrega, go-live,
+  congelamento), com cor e descrição; o editor arrasta o marco para mudar a data.
+- **Orçamento**: itens (orçado, CAPEX/OPEX, pilar) e lançamentos (realizado, com data, documento e estorno); saldo,
+  execução, previsão de fechamento no ritmo atual, alertas de estouro, gráficos (curva acumulada x planejado e orçado x
+  realizado por item, categoria ou pilar) e exportação para Excel. Pilar com itens passa a usar esse financeiro.
+- **Relatório em PDF** do projeto: resumo e indicadores, pilares, orçamento, linha do tempo (Gantt com marcos),
+  histórico e comentários recentes.
 
 ## Como rodar (passo a passo)
 

@@ -17,7 +17,10 @@ import pytest
 from sqlalchemy import select
 
 from app.main import app
-from app.models import Auditoria, Comentario, Fase, PapelUsuario, Pilar, Projeto, ProjetoMembro, Tarefa
+from app.models import (
+    Auditoria, Comentario, DependenciaTarefa, Fase, ItemOrcamento, LancamentoOrcamento, MarcoLinhaTempo, PapelUsuario,
+    Pilar, Projeto, ProjetoMembro, Tarefa,
+)
 from tests.conftest import SENHA
 
 DONO, INTRUSO, LEITOR, ADMIN = "dono@a.com.br", "intruso@b.com.br", "leitor@a.com.br", "admin@a.com.br"
@@ -44,6 +47,18 @@ CORPOS = {  # corpos válidos: o 404 tem de vir da AUTORIZAÇÃO, não de um 422
     ("PATCH", "/projetos/{projeto_id}/comentarios/{comentario_id}"): {"texto": "invasão"},
     ("POST", "/projetos/{projeto_id}/pilares"): {"nome": "Invasão"},
     ("PATCH", "/projetos/{projeto_id}/pilares/{pilar_id}"): {"farol": "vermelho", "status_texto": "invadido"},
+    ("POST", "/projetos/{projeto_id}/fases"): {"titulo": "Invasão"},
+    ("PATCH", "/projetos/{projeto_id}/fases/{fase_id}"): {"titulo": "Invasão"},
+    ("PUT", "/projetos/{projeto_id}/fases/ordem"): lambda c: {"ids": list(reversed(c["fases"]))},
+    ("POST", "/projetos/{projeto_id}/dependencias"): lambda c: {"predecessora_id": c["tarefa2_id"], "sucessora_id": c["tarefa_id"],
+                                                                "tipo": "fim_apos_fim"},
+    ("POST", "/projetos/{projeto_id}/marcos"): {"titulo": "Invasão", "data": "2026-04-01"},
+    ("PATCH", "/projetos/{projeto_id}/marcos/{marco_id}"): {"titulo": "invadido"},
+    ("POST", "/projetos/{projeto_id}/orcamento/itens"): {"descricao": "Invasão", "valor_orcado": "1.00"},
+    ("PATCH", "/projetos/{projeto_id}/orcamento/itens/{item_id}"): {"valor_orcado": "0.00"},
+    ("POST", "/projetos/{projeto_id}/orcamento/lancamentos"): lambda c: {
+        "item_id": c["item_id"], "valor": "1.00", "data": "2026-01-01", "descricao": "invasão"},
+    ("PATCH", "/projetos/{projeto_id}/orcamento/lancamentos/{lancamento_id}"): {"valor": "999999.00"},
 }
 
 
@@ -65,13 +80,27 @@ def cenario(client, criar_usuario, login) -> Dict:
     comentario = client.post(f"/projetos/{pid}/comentarios", json={"texto": "valor: R$ 80 mi"},
                              headers=h["dono"]).json()
     client.post(f"/projetos/{pid}/membros", json={"usuario_id": ids["leitor"]}, headers=h["dono"])
+    tarefa2 = client.post(f"/projetos/{pid}/fases/{fase_id}/tarefas", json={"descricao": "Assinatura"},
+                          headers=h["dono"]).json()
+    dep = client.post(f"/projetos/{pid}/dependencias", json={"predecessora_id": tarefa["id"], "sucessora_id": tarefa2["id"]},
+                      headers=h["dono"]).json()["dependencia"]
+    marco = client.post(f"/projetos/{pid}/marcos", json={"titulo": "Signing", "data": "2026-05-01"}, headers=h["dono"]).json()
+    item = client.post(f"/projetos/{pid}/orcamento/itens", json={"descricao": "Assessoria", "valor_orcado": "500000.00"},
+                       headers=h["dono"]).json()
+    lanc = client.post(f"/projetos/{pid}/orcamento/lancamentos",
+                       json={"item_id": item["id"], "valor": "80000.00", "data": "2026-02-01", "descricao": "Parcela 1"},
+                       headers=h["dono"]).json()
     return {"h": h, "ids": ids, "projeto_id": pid, "fase_id": fase_id, "tarefa_id": tarefa["id"],
-            "comentario_id": comentario["id"], "pilar_id": projeto["pilares"][0]["id"]}
+            "comentario_id": comentario["id"], "pilar_id": projeto["pilares"][0]["id"],
+            "fases": [f["id"] for f in projeto["fases"]], "tarefa2_id": tarefa2["id"], "dependencia_id": dep["id"],
+            "marco_id": marco["id"], "item_id": item["id"], "lancamento_id": lanc["id"]}
 
 
 def _url(caminho: str, c: Dict, projeto_id: int) -> str:
     valores = {"projeto_id": projeto_id, "fase_id": c["fase_id"], "tarefa_id": c["tarefa_id"],
-               "comentario_id": c["comentario_id"], "usuario_id": c["ids"]["leitor"], "pilar_id": c["pilar_id"]}
+               "comentario_id": c["comentario_id"], "usuario_id": c["ids"]["leitor"], "pilar_id": c["pilar_id"],
+               "dependencia_id": c["dependencia_id"], "marco_id": c["marco_id"], "item_id": c["item_id"],
+               "lancamento_id": c["lancamento_id"]}
     return re.sub(r"\{(\w+)\}", lambda m: str(valores[m.group(1)]), caminho)
 
 
@@ -83,13 +112,19 @@ def _foto_do_banco(db) -> tuple:
         [(t.id, t.descricao, t.percentual_conclusao, t.fase_id) for t in db.scalars(select(Tarefa))],
         [(c.id, c.texto) for c in db.scalars(select(Comentario))],
         sorted((m.projeto_id, m.usuario_id, m.papel) for m in db.scalars(select(ProjetoMembro))),
-        db.query(Fase).count(),
+        sorted((f.id, f.titulo, f.ordem_sequencia) for f in db.scalars(select(Fase))),
         sorted((x.id, x.nome, x.farol, x.status_texto) for x in db.scalars(select(Pilar))),
+        sorted((d.id, d.predecessora_id, d.sucessora_id, d.tipo) for d in db.scalars(select(DependenciaTarefa))),
+        sorted((m.id, m.titulo, m.data) for m in db.scalars(select(MarcoLinhaTempo))),
+        sorted((i.id, i.descricao, i.valor_orcado) for i in db.scalars(select(ItemOrcamento))),
+        sorted((x.id, x.valor, x.descricao) for x in db.scalars(select(LancamentoOrcamento))),
     )
 
 
 def _corpo(metodo, caminho, c):
     corpo = CORPOS.get((metodo, caminho))
+    if callable(corpo):
+        corpo = corpo(c)
     if corpo and "usuario_id" in corpo:
         corpo = {**corpo, "usuario_id": c["ids"]["intruso"]}  # tenta se adicionar ao projeto
     return corpo
@@ -205,9 +240,7 @@ ESCRITAS = [(m, p) for m, p in _rotas_de_projeto() if m != "GET" and "/comentari
 def test_visualizador_nao_altera_nada(client, cenario, db, metodo, caminho):
     c = cenario
     antes = _foto_do_banco(db)
-    corpo = CORPOS.get((metodo, caminho))
-    if corpo and "usuario_id" in corpo:
-        corpo = {**corpo, "usuario_id": c["ids"]["intruso"]}
+    corpo = _corpo(metodo, caminho, c)
     r = client.request(metodo, _url(caminho, c, c["projeto_id"]), json=corpo, headers=c["h"]["leitor"])
     assert r.status_code == 403, f"{metodo} {caminho}: {r.status_code} {r.text[:200]}"
     assert _foto_do_banco(db) == antes
