@@ -154,3 +154,46 @@ class RecusaNul:
         if isinstance(valor, list):
             return any(cls._contem_nul(v) for v in valor)
         return False
+
+
+class LimiteSimultaneas:
+    """
+    No máximo `maximo` requisições sendo atendidas ao mesmo tempo neste processo; as outras esperam a
+    vez numa fila (barata: não ocupam thread nem conexão). Quem espera mais que `espera_max` segundos
+    recebe 503 com Retry-After.
+
+    Por quê (teste de carga de 16/11/2026, 300 usuários): sem esse teto, o servidor aceitava tudo, cada
+    requisição pegava uma conexão do banco na checagem do login e ficava com ela parada esperando
+    thread para a rota; as threads, por sua vez, esperavam conexão. Com `maximo` = conexões do pool,
+    o pool nunca esgota e ninguém segura conexão sem usar.
+    """
+
+    LIVRES = ("/saude",)  # o health check não entra na fila: sob carga, ele responde se o sistema vive
+
+    def __init__(self, app: ASGIApp, maximo: int, espera_max: float) -> None:
+        self.app = app
+        self.maximo = maximo
+        self.espera_max = espera_max
+        self._vagas: Any = None  # asyncio.Semaphore, criado no laço de eventos do processo
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["path"] in self.LIVRES:
+            await self.app(scope, receive, send)
+            return
+        import asyncio
+
+        if self._vagas is None:
+            self._vagas = asyncio.Semaphore(self.maximo)
+        try:
+            await asyncio.wait_for(self._vagas.acquire(), timeout=self.espera_max)
+        except TimeoutError:
+            resposta = JSONResponse(
+                {"detail": "O sistema está com muitos acessos agora. Tente de novo em alguns segundos."},
+                status_code=503, headers={"Retry-After": "5"},
+            )
+            await resposta(scope, receive, send)
+            return
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self._vagas.release()

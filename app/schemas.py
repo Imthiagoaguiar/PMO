@@ -543,7 +543,7 @@ class ResumoOrcamento(BaseModel):
     execucao: Optional[float] = Field(None, description="Realizado / orçado, em %")
     avanco_fisico: float = Field(..., description="% concluído do cronograma")
     previsao_final: Optional[Decimal] = Field(
-        None, description="Custo previsto ao final no ritmo atual: realizado / avanço físico (EAC)",
+        None, description="Custo previsto ao final no ritmo atual: realizado / avanço físico (EAC). Só a partir de 10% de avanço",
     )
     itens: List[ItemOrcamentoRead]
     por_categoria: List[TotalOrcamento]

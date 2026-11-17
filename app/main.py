@@ -4,12 +4,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import TimeoutError as PoolEsgotado
 
 from app import registro
 from app.auditoria import ip_requisicao
 from app.config import settings
 from app.database import engine
-from app.limites import KB, MB, LimiteCorpo, RecusaNul
+from app.limites import KB, MB, LimiteCorpo, LimiteSimultaneas, RecusaNul
 from app.routers import auditoria, auth, comentarios, dependencias, fases, importacoes, marcos, orcamento, pilares, projetos, tarefas, usuarios, vigia
 
 EM_PRODUCAO = settings.ambiente == "prod"
@@ -42,8 +43,23 @@ app.add_middleware(
 # Ordem: o último adicionado é o mais externo. LimiteCorpo corta o tamanho ANTES de o RecusaNul ler o corpo.
 app.add_middleware(RecusaNul)
 app.add_middleware(LimiteCorpo, padrao=1 * MB, por_rota={"/projetos/importar": settings.importacao_max_mb * MB + 64 * KB})
+# Fila de entrada: no máximo tantas requisições ao mesmo tempo quantas conexões o pool tem (ver
+# app/limites.py). Fica DENTRO do registro, para os 503 de fila cheia aparecerem no log (e no vigia).
+app.add_middleware(LimiteSimultaneas, maximo=settings.db_pool_size + settings.db_max_overflow,
+                   espera_max=settings.fila_espera_max_segundos)
 # Mais externo de todos: mede o tempo total e registra até as respostas dos outros middlewares (413, 422).
 app.add_middleware(registro.RegistroDeAcesso)
+
+
+@app.exception_handler(PoolEsgotado)
+async def sistema_ocupado(request: Request, exc: PoolEsgotado) -> JSONResponse:
+    """Todas as conexões do banco ocupadas por mais de DB_POOL_TIMEOUT: é sobrecarga, não defeito."""
+    logger.warning("Banco sem conexão livre em %s %s (pool esgotado): respondendo 503", request.method, request.url.path)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "O sistema está com muitos acessos agora. Tente de novo em alguns segundos."},
+        headers={"Retry-After": "5"},
+    )
 
 
 @app.middleware("http")

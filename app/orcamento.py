@@ -10,7 +10,7 @@ Contas do orçamento do projeto: itens (orçado) x lançamentos (realizado), sem
 
 import calendar
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, List, Optional, Tuple
 
@@ -30,6 +30,10 @@ from app.schemas import (
 CENTAVO = Decimal("0.01")
 ZERO = Decimal("0")
 MAX_MESES_CURVA = 120
+# Abaixo disso, "realizado ÷ avanço" não é previsão: com 1% feito, qualquer gasto vira 100 vezes.
+AVANCO_MINIMO_PREVISAO = 10.0
+# Lançamento mais de 1 ano antes do início ou depois do fim: provável erro de digitação (2062 em vez de 2026).
+FOLGA_PERIODO_DIAS = 365
 NOME_CATEGORIA = {CategoriaOrcamento.CAPEX: "CAPEX", CategoriaOrcamento.OPEX: "OPEX"}
 
 
@@ -97,14 +101,27 @@ def _meses(inicio: date, fim: date) -> List[Tuple[int, int]]:
     return meses
 
 
+def janela_valida(periodo: Tuple[Optional[date], Optional[date]], hoje: date) -> Tuple[date, date]:
+    """Datas de lançamento plausíveis: o período do projeto (ou hoje) com 1 ano de folga para cada lado."""
+    inicio, fim = periodo
+    folga = timedelta(days=FOLGA_PERIODO_DIAS)
+    return (inicio or hoje) - folga, max(fim or hoje, hoje) + folga
+
+
 def _curva(db: Session, projeto: Projeto, total_orcado: Decimal,
-           periodo: Tuple[Optional[date], Optional[date]]) -> List[PontoCurva]:
+           periodo: Tuple[Optional[date], Optional[date]], hoje: date) -> Tuple[List[PontoCurva], List[date]]:
+    """(curva, datas de lançamento fora do período plausível — que ficam fora da curva e viram alerta)."""
+    de, ate = janela_valida(periodo, hoje)
     por_mes: Dict[Tuple[int, int], Decimal] = defaultdict(lambda: ZERO)
     datas: List[date] = []
+    fora: List[date] = []
     for dia, soma in db.execute(
         select(LancamentoOrcamento.data, func.sum(LancamentoOrcamento.valor))
         .where(LancamentoOrcamento.projeto_id == projeto.id).group_by(LancamentoOrcamento.data)
     ):
+        if not de <= dia <= ate:
+            fora.append(dia)
+            continue
         por_mes[(dia.year, dia.month)] += Decimal(soma)
         datas.append(dia)
 
@@ -112,7 +129,7 @@ def _curva(db: Session, projeto: Projeto, total_orcado: Decimal,
     com_plano = inicio is not None and fim is not None and fim >= inicio and total_orcado > 0
     limites = datas + ([inicio, fim] if com_plano else [])
     if not limites:
-        return []
+        return [], fora
     duracao = (fim - inicio).days + 1 if com_plano else 0
 
     pontos, acumulado = [], ZERO
@@ -126,7 +143,7 @@ def _curva(db: Session, projeto: Projeto, total_orcado: Decimal,
             planejado = (total_orcado * decorridos / duracao).quantize(CENTAVO, ROUND_HALF_UP)
         pontos.append(PontoCurva(mes=f"{ano}-{mes:02d}", realizado_no_mes=no_mes,
                                  realizado_acumulado=acumulado, planejado_acumulado=planejado))
-    return pontos
+    return pontos, fora
 
 
 def resumo(db: Session, projeto: Projeto, hoje: Optional[date] = None) -> ResumoOrcamento:
@@ -138,7 +155,7 @@ def resumo(db: Session, projeto: Projeto, hoje: Optional[date] = None) -> Resumo
     avanco = indicadores.percentual_conclusao
     previsao = (
         (total_realizado / Decimal(str(avanco)) * 100).quantize(CENTAVO, ROUND_HALF_UP)
-        if avanco > 0 and total_realizado > 0 else None
+        if avanco >= AVANCO_MINIMO_PREVISAO and total_realizado > 0 else None
     )
 
     por_categoria = [
@@ -158,7 +175,7 @@ def resumo(db: Session, projeto: Projeto, hoje: Optional[date] = None) -> Resumo
     ]
 
     periodo = (projeto.data_inicio or indicadores.data_inicio_prevista, indicadores.data_fim_prevista)
-    curva = _curva(db, projeto, total_orcado, periodo)
+    curva, fora_do_periodo = _curva(db, projeto, total_orcado, periodo, hoje)
 
     alertas: List[AlertaOrcamento] = []
     aprovado = projeto.orcamento_aprovado
@@ -179,6 +196,11 @@ def resumo(db: Session, projeto: Projeto, hoje: Optional[date] = None) -> Resumo
         alertas.append(AlertaOrcamento(nivel="medio", mensagem=(
             f"No ritmo atual ({avanco:.0f}% do cronograma feito), o projeto deve fechar em {reais(previsao)}, "
             f"{acima:.0f}% acima do orçado.")))
+    if fora_do_periodo:
+        exemplo = max(fora_do_periodo, key=lambda d: abs((d - hoje).days))
+        alertas.append(AlertaOrcamento(nivel="medio", mensagem=(
+            f"{len(fora_do_periodo)} data(s) de lançamento fora do período do projeto (ex.: {exemplo:%d/%m/%Y}). "
+            "Confira se não é erro de digitação; esses lançamentos contam no total, mas ficam fora do gráfico mensal.")))
     mes_atual = f"{hoje.year}-{hoje.month:02d}"
     agora = next((p for p in curva if p.mes == mes_atual), None)
     if agora and agora.planejado_acumulado and agora.realizado_acumulado > agora.planejado_acumulado * Decimal("1.1"):

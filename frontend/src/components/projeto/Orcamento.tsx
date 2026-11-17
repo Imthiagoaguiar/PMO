@@ -124,7 +124,7 @@ export function Orcamento({ projeto, podeEditar }: { projeto: Projeto; podeEdita
         <Kpi titulo="Avanço do cronograma" valor={`${Math.round(r.avanco_fisico)}%`} detalhe="Média das tarefas" barra={<BarraProgresso valor={r.avanco_fisico} />} />
         <Kpi titulo="Previsão ao final" valor={fmt.moeda(r.previsao_final)}
           destaque={!!r.previsao_final && Number(r.previsao_final) > Number(r.total_orcado) * 1.05}
-          detalhe={r.previsao_final ? "No ritmo atual: realizado ÷ avanço" : "Precisa de gasto e de avanço"} />
+          detalhe={r.previsao_final ? "No ritmo atual: realizado ÷ avanço" : "Aparece com gasto e 10% do cronograma feito"} />
       </div>
 
       {r.alertas.length > 0 && (

@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import secrets
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple, Optional, Tuple
@@ -33,13 +34,20 @@ def como_utc(valor: datetime) -> datetime:
 # ---------- Senhas ----------
 
 
+# No máximo N Argon2 ao mesmo tempo por processo (cada um usa 64 MB e um núcleo inteiro): numa
+# avalanche de logins, os excedentes esperam a vez em vez de estourar a memória do servidor.
+_argon2_livres = threading.BoundedSemaphore(settings.argon2_simultaneos)
+
+
 def gerar_hash_senha(senha: str) -> str:
-    return _hasher.hash(senha)
+    with _argon2_livres:
+        return _hasher.hash(senha)
 
 
 def verificar_senha(senha: str, hash_senha: Optional[str]) -> bool:
     try:
-        ok = _hasher.verify(hash_senha or _HASH_FICTICIO, senha)
+        with _argon2_livres:
+            ok = _hasher.verify(hash_senha or _HASH_FICTICIO, senha)
     except (VerificationError, InvalidHashError):
         return False
     return ok and hash_senha is not None

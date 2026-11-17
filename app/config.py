@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     vigia_intervalo_minutos: int = Field(60, ge=5, le=24 * 60)
     vigia_api_url: str = "http://localhost:8000"  # para a sonda de saúde
     database_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/pmo"
+    # Conexões por processo da API (WEB_CONCURRENCY processos): fixas + extras. Some tudo e deixe folga
+    # para o worker, o vigia e o backup dentro do max_connections do Postgres (padrão 100).
+    db_pool_size: int = Field(10, ge=1, le=100)
+    db_max_overflow: int = Field(10, ge=0, le=100)
+    db_pool_timeout: int = Field(10, ge=1, le=120)  # segundos esperando conexão antes do 503
+    # Requisições além do pool esperam numa fila (sem ocupar thread nem conexão); passando disto, 503.
+    fila_espera_max_segundos: float = Field(15.0, ge=1, le=120)
+    # Verificações de senha (Argon2, 64 MB de RAM cada) ao mesmo tempo, por processo. 300 logins juntos
+    # sem esse teto levaram a API a 1,1 GB de memória no teste de carga.
+    argon2_simultaneos: int = Field(4, ge=1, le=64)
 
     # Sem valor padrão de propósito: a API não sobe sem uma chave definida.
     # Gere com: python -c "import secrets; print(secrets.token_urlsafe(64))"
