@@ -316,6 +316,7 @@ class TarefaRead(BaseModel):
     responsavel_id: Optional[int]
     pilar_id: Optional[int] = None
     percentual_conclusao: int
+    concluida_em: Optional[InstanteUTC] = Field(None, description="Quando chegou a 100% (nulo se aberta)")
     versao: int = Field(..., description="Envie de volta no PATCH (bloqueio otimista)")
 
 
@@ -552,6 +553,62 @@ class ResumoOrcamento(BaseModel):
     alertas: List[AlertaOrcamento]
 
 
+# ---------- Anexos ----------
+
+
+class AnexoRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    tarefa_id: Optional[int] = Field(None, description="Nulo se a tarefa foi excluída (o arquivo continua no histórico)")
+    tarefa_descricao: str
+    nome_original: str
+    tamanho: int = Field(..., description="Bytes")
+    tipo_mime: str
+    sha256: str
+    enviado_por: Optional["UsuarioResumo"] = None
+    enviado_em: InstanteUTC
+
+
+# ---------- Gargalos ----------
+
+
+class GrupoGargalo(BaseModel):
+    nome: str
+    tarefas_com_prazo: int
+    entregues_no_prazo: int
+    entregues_atrasadas: int
+    abertas_atrasadas: int
+    dias_atraso_entregues: int = Field(..., description="Soma dos dias de atraso das tarefas entregues depois do prazo")
+    dias_atraso_abertas: int = Field(..., description="Soma dos dias de atraso das tarefas ainda abertas e vencidas")
+    atraso_medio: Optional[float] = Field(None, description="Dias, entre as tarefas atrasadas (entregues ou abertas)")
+    pior_atraso: int
+    pontualidade: Optional[float] = Field(None, description="% das entregues (com data conhecida) que saíram no prazo")
+
+
+class TarefaGargalo(BaseModel):
+    tarefa_id: int
+    descricao: str
+    fase: str
+    pilar: Optional[str]
+    responsavel: Optional[str]
+    prazo: date
+    dias_atraso: int
+    situacao: Literal["entregue_atrasada", "aberta_atrasada"]
+
+
+class Gargalos(BaseModel):
+    """Dias corridos. Entregue = chegou a 100% (data registrada desde 20/11/2026 ou recuperada do histórico)."""
+
+    dias_atraso_total: int
+    pontualidade: Optional[float]
+    entregues_sem_data: int = Field(..., description="Concluídas sem data de conclusão conhecida (fora das contas de atraso)")
+    por_fase: List[GrupoGargalo]
+    por_pilar: List[GrupoGargalo]
+    por_responsavel: List[GrupoGargalo]
+    piores: List[TarefaGargalo] = Field(..., description="As 10 tarefas com mais dias de atraso")
+
+
 class MinhaTarefa(TarefaRead):
     projeto_id: int
     nome_projeto: str
@@ -721,6 +778,21 @@ class UsuarioRead(UsuarioResumo):
     dois_fatores_ativo: bool
     exige_configurar_2fa: bool = Field(..., description="Admin sem 2FA: precisa ativar antes de usar o sistema")
     pode_ver_vigia: bool = Field(False, description="Admin listado em VIGIA_EMAILS: vê os relatórios do vigia")
+    lembretes_silenciados_ate: Optional[InstanteUTC] = Field(
+        None, description="Até quando não recebe o e-mail de tarefas atrasadas (nulo = recebendo)",
+    )
+
+    @field_validator("lembretes_silenciados_ate")
+    @classmethod
+    def _so_se_ainda_vale(cls, v: Optional[datetime]) -> Optional[datetime]:
+        # Silêncio que já passou é o mesmo que "recebendo": a tela não precisa comparar com o relógio.
+        from app import tempo
+
+        return v if v is not None and v > tempo.agora_utc() else None
+
+
+class SilenciarLembretes(BaseModel):
+    horas: int = Field(24, ge=1, le=24 * 30, description="Por quantas horas (padrão: 1 dia)")
 
 
 class UsuarioCreate(BaseModel):
@@ -1015,3 +1087,4 @@ class VigiaSituacao(BaseModel):
 
 # Referências a classes definidas mais abaixo no arquivo.
 LancamentoRead.model_rebuild()
+AnexoRead.model_rebuild()

@@ -97,7 +97,7 @@ export function EsqueciSenha() {
           <Input id="email" type="email" autoComplete="username" autoFocus required value={email} onChange={(e) => setEmail(e.target.value)} />
         </Campo>
         <Alerta texto={erro} />
-        <Button type="submit" disabled={enviando || !email.trim()}>
+        <Button carregando={enviando} type="submit" disabled={enviando || !email.trim()}>
           {enviando ? "Enviando..." : "Enviar link"}
         </Button>
         {VOLTAR}
@@ -183,7 +183,7 @@ export function RedefinirSenha() {
           {erroConfirmacao && <p className="text-xs text-destructive">As senhas não conferem.</p>}
         </Campo>
         <Alerta texto={erro} />
-        <Button type="submit" disabled={!valido || enviando}>
+        <Button carregando={enviando} type="submit" disabled={!valido || enviando}>
           {enviando ? "Salvando..." : "Salvar nova senha"}
         </Button>
       </form>

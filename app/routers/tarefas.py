@@ -97,6 +97,8 @@ def criar_tarefa(
         dados["data_fim"] = calcular_data_fim(dados["data_inicio"], payload.duracao_dias_uteis)
 
     tarefa = Tarefa(fase_id=fase.id, **dados)
+    if tarefa.percentual_conclusao >= 100:
+        tarefa.concluida_em = tempo.agora_utc()
     db.add(tarefa)
     db.flush()
     auditoria.registrar(
@@ -170,7 +172,14 @@ def atualizar_tarefa(
         except dependencias.RegraDependencia as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
+    antes = tarefa.percentual_conclusao
     diff = auditoria.aplicar_alteracoes(tarefa, alteracoes)
+    if "percentual_conclusao" in diff:
+        # Quando chegou a 100% (gargalos: quem entregou atrasado); reaberta, deixa de estar concluída.
+        if tarefa.percentual_conclusao >= 100 > antes:
+            tarefa.concluida_em = tempo.agora_utc()
+        elif tarefa.percentual_conclusao < 100:
+            tarefa.concluida_em = None
 
     # Valida as datas já combinadas (ex.: PATCH só da data_fim contra a data_inicio existente).
     if tarefa.data_inicio and tarefa.data_fim and tarefa.data_fim < tarefa.data_inicio:

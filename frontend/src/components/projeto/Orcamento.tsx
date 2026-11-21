@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query"
-import { AlertTriangle, Download, Info, Pencil, Plus, Receipt, Trash2 } from "lucide-react"
+import { AlertTriangle, Download, Info, Pencil, Plus, Receipt, Trash2, Loader2 } from "lucide-react"
 import { useState, type FormEvent, type ReactNode } from "react"
 import { toast } from "sonner"
 
@@ -109,7 +109,7 @@ export function Orcamento({ projeto, podeEditar }: { projeto: Projeto; podeEdita
             </Button>
           </>
         )}
-        <Button size="sm" variant="outline" onClick={exportar} disabled={exportando}>
+        <Button carregando={exportando} size="sm" variant="outline" onClick={exportar} disabled={exportando}>
           <Download /> {exportando ? "Exportando..." : "Exportar Excel"}
         </Button>
       </div>
@@ -467,7 +467,7 @@ function ItemDialog({ projeto, item, aoFechar }: { projeto: Projeto; item?: Item
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={aoFechar}>Cancelar</Button>
-            <Button type="submit" disabled={!valido || salvar.isPending}>{salvar.isPending ? "Salvando..." : "Salvar"}</Button>
+            <Button carregando={salvar.isPending} type="submit" disabled={!valido || salvar.isPending}>{salvar.isPending ? "Salvando..." : "Salvar"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -551,7 +551,7 @@ function LancamentoDialog({ projeto, itens, item, lancamento, aoFechar }: {
           </Campo>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={aoFechar}>Cancelar</Button>
-            <Button type="submit" disabled={!valido || salvar.isPending}>{salvar.isPending ? "Salvando..." : "Salvar"}</Button>
+            <Button carregando={salvar.isPending} type="submit" disabled={!valido || salvar.isPending}>{salvar.isPending ? "Salvando..." : "Salvar"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -592,6 +592,7 @@ function ExcluirItem({ projeto, item, aoFechar }: { projeto: Projeto; item: Item
               if (item) excluir.mutate(item)
             }}
           >
+            {excluir.isPending && <Loader2 className="animate-spin" aria-hidden />}
             {excluir.isPending ? "Excluindo..." : item?.lancamentos ? "Excluir item e lançamentos" : "Excluir item"}
           </AlertDialogAction>
         </AlertDialogFooter>

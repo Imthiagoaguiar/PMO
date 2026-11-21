@@ -36,6 +36,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, make_url
 
 from app import registro
+from app import anexos
 from app.config import settings
 
 logger = logging.getLogger("pmo.backup")
@@ -115,6 +116,10 @@ def fazer_backup(pasta: Optional[Path] = None) -> Path:
 
     resumo = hashlib.sha256(final.read_bytes()).hexdigest()
     removidos = aplicar_retencao(pasta, settings.backup_retencao)
+    # Anexos: espelho incremental (cada arquivo tem nome único e nunca muda; só os novos são copiados).
+    anexos_copiados = anexos.espelhar(pasta / "anexos")
+    if settings.backup_copia_dir:
+        anexos.espelhar(Path(settings.backup_copia_dir) / "anexos")
     copia = None
     if settings.backup_copia_dir:
         destino = Path(settings.backup_copia_dir)
@@ -124,7 +129,7 @@ def fazer_backup(pasta: Optional[Path] = None) -> Path:
     logger.info(
         "Backup concluído: %s (%.1f MB em %.1f s)", final.name, final.stat().st_size / 1e6, time.perf_counter() - inicio,
         extra={"tipo": "backup", "arquivo": final.name, "bytes": final.stat().st_size, "sha256": resumo,
-               "copia": str(copia) if copia else None, "removidos": removidos},
+               "copia": str(copia) if copia else None, "removidos": removidos, "anexos_copiados": anexos_copiados},
     )
     return final
 

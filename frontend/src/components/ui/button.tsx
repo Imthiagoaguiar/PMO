@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react"
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
@@ -42,10 +43,15 @@ function Button({
   variant = "default",
   size = "default",
   asChild = false,
+  carregando = false,
+  disabled,
+  children,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean
+    /** Processando: mostra o círculo girando no lugar do ícone e desabilita (sem clique duplo). */
+    carregando?: boolean
   }) {
   const Comp = asChild ? Slot.Root : "button"
 
@@ -54,9 +60,21 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
+      aria-busy={carregando || undefined}
+      disabled={disabled || carregando}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {carregando && !asChild ? (
+        <>
+          <Loader2 className="animate-spin" aria-hidden />
+          {/* O ícone original sai; o texto continua (ex.: "Gerando PDF..."). */}
+          {React.Children.toArray(children).filter((filho) => typeof filho === "string" || typeof filho === "number")}
+        </>
+      ) : (
+        children
+      )}
+    </Comp>
   )
 }
 

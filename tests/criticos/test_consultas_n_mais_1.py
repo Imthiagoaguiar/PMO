@@ -26,7 +26,9 @@ TETO_POR_ROTA = {
     # indicadores, pilares (+ financeiro do orçamento), orçamento (itens, lançamentos, curva), marcos,
     # histórico, comentários (autores e tarefas) e auditoria
     "/projetos/{id}/relatorio": 24,
-    "/projetos/{id}/orcamento": 12,  # itens, lançamentos por item e por dia, indicadores do cronograma
+    "/projetos/{id}/orcamento": 12,
+    # a apresentação junta indicadores, pilares, orçamento, gargalos, marcos e atrasadas
+    "/projetos/{id}/apresentacao": 26,  # itens, lançamentos por item e por dia, indicadores do cronograma
 }
 
 
@@ -77,6 +79,7 @@ def montar(client, criar_usuario, login, brasil_api) -> Callable[[int], Dict]:
                 client.post(f"/projetos/{pid}/dependencias", json={
                     "predecessora_id": anterior, "sucessora_id": tarefa["id"], "tipo": "fim_apos_fim", "ajustar_datas": False,
                 }, headers=h)
+            client.post(f"/projetos/{pid}/tarefas/{tarefa['id']}/anexos", files={"arquivo": (f"a{i}.txt", b"x")}, headers=h)
             anterior = tarefa["id"]
         return {"id": pid, "h": h}
 
@@ -94,6 +97,9 @@ ROTAS = [
     "/projetos/{id}/orcamento",
     "/projetos/{id}/orcamento/lancamentos?limite=100",
     "/projetos/{id}/orcamento/exportar",
+    "/projetos/{id}/gargalos",
+    "/projetos/{id}/anexos?limite=100",
+    "/projetos/{id}/apresentacao",
     "/projetos/{id}/membros",
     "/projetos/{id}/comentarios?limite=100",
     "/projetos/{id}/historico?limite=100",

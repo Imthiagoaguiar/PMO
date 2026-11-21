@@ -13,6 +13,8 @@ interface Auth {
   sair: () => Promise<void>
   /** Limpa a sessão sem chamar a API (ex.: depois de trocar a senha, o back já revogou tudo). */
   encerrarLocalmente: () => void
+  /** Troca o usuário em memória pelo que a API devolveu (ex.: depois de silenciar os lembretes). */
+  atualizarUsuario: (usuario: Usuario) => void
 }
 
 const AuthContext = createContext<Auth | null>(null)
@@ -71,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [encerrarLocalmente])
 
   const valor = useMemo(
-    () => ({ usuario, carregando, entrar, entrarComCodigo, sair, encerrarLocalmente }),
+    () => ({ usuario, carregando, entrar, entrarComCodigo, sair, encerrarLocalmente, atualizarUsuario: setUsuario }),
     [usuario, carregando, entrar, entrarComCodigo, sair, encerrarLocalmente],
   )
   return <AuthContext.Provider value={valor}>{children}</AuthContext.Provider>

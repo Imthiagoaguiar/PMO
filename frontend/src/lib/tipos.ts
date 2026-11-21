@@ -31,6 +31,8 @@ export interface Usuario extends UsuarioResumo {
   exige_configurar_2fa: boolean
   /** Admin listado em VIGIA_EMAILS: vê os relatórios do vigia. */
   pode_ver_vigia: boolean
+  /** Até quando não recebe o e-mail de tarefas atrasadas (null = recebendo). */
+  lembretes_silenciados_ate?: string | null
 }
 
 export interface StatusDoisFatores {
@@ -49,6 +51,8 @@ export interface Tarefa {
   responsavel_id: number | null
   pilar_id: number | null
   percentual_conclusao: number
+  /** Quando chegou a 100% (nulo se aberta). */
+  concluida_em?: string | null
   /** Bloqueio otimista: enviar de volta no PATCH (409 se outra pessoa salvou antes). */
   versao: number
 }
@@ -321,4 +325,52 @@ export interface ResumoOrcamento {
   por_pilar: TotalOrcamento[]
   curva: PontoCurva[]
   alertas: { nivel: "alto" | "medio" | "info"; mensagem: string }[]
+}
+
+// ---------- Anexos e gargalos ----------
+
+export interface Anexo {
+  id: number
+  tarefa_id: number | null
+  tarefa_descricao: string
+  nome_original: string
+  tamanho: number
+  tipo_mime: string
+  sha256: string
+  enviado_por: UsuarioResumo | null
+  enviado_em: string
+}
+
+export interface GrupoGargalo {
+  nome: string
+  tarefas_com_prazo: number
+  entregues_no_prazo: number
+  entregues_atrasadas: number
+  abertas_atrasadas: number
+  dias_atraso_entregues: number
+  dias_atraso_abertas: number
+  atraso_medio: number | null
+  pior_atraso: number
+  pontualidade: number | null
+}
+
+export interface TarefaGargalo {
+  tarefa_id: number
+  descricao: string
+  fase: string
+  pilar: string | null
+  responsavel: string | null
+  prazo: string
+  dias_atraso: number
+  situacao: "entregue_atrasada" | "aberta_atrasada"
+}
+
+export interface Gargalos {
+  dias_atraso_total: number
+  pontualidade: number | null
+  entregues_sem_data: number
+  por_fase: GrupoGargalo[]
+  por_pilar: GrupoGargalo[]
+  por_responsavel: GrupoGargalo[]
+  piores: TarefaGargalo[]
 }

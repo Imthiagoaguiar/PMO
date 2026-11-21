@@ -3,6 +3,8 @@ import { useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
 import { Campo } from "@/components/comum"
+import { AnexosDaTarefa } from "@/components/projeto/Anexos"
+import { BotoesAndamento } from "@/components/projeto/BotoesAndamento"
 import { DependenciasDaTarefa } from "@/components/projeto/Dependencias"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -176,7 +178,7 @@ export function TarefaDialog({ projetoId, fases, membros, pilares, faseInicial, 
             {duracaoSemInicio && <span className="text-destructive">Informe o início para calcular.</span>}
           </div>
 
-          <div className="grid grid-cols-[1fr_auto] gap-4">
+          <div className="grid gap-4">
             <Campo label="Responsável">
               <Select value={responsavel} onValueChange={setResponsavel}>
                 <SelectTrigger className="w-full">
@@ -202,30 +204,42 @@ export function TarefaDialog({ projetoId, fases, membros, pilares, faseInicial, 
                 />
               )}
             </Campo>
-            <Campo label="% concluído" htmlFor="t-percentual">
-              <Input
-                id="t-percentual"
-                type="number"
-                min={0}
-                max={100}
-                className="w-24"
-                value={percentual}
-                onChange={(e) => setPercentual(e.target.value)}
-              />
-            </Campo>
           </div>
 
+          <Campo label="Andamento">
+            <div className="flex flex-wrap items-center gap-3">
+              <BotoesAndamento valor={Number(percentual)} aoEscolher={(v) => setPercentual(String(v))} />
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                outro valor
+                <Input
+                  id="t-percentual"
+                  aria-label="% concluído"
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="h-8 w-20"
+                  value={percentual}
+                  onChange={(e) => setPercentual(e.target.value)}
+                />
+                %
+              </label>
+            </div>
+          </Campo>
+
           {tarefa && projeto ? (
-            <DependenciasDaTarefa projeto={projeto} tarefa={tarefa} podeEditar />
+            <>
+              <DependenciasDaTarefa projeto={projeto} tarefa={tarefa} podeEditar />
+              <AnexosDaTarefa projetoId={projeto.id} tarefa={tarefa} podeEditar />
+            </>
           ) : (
-            <p className="text-xs text-muted-foreground">Depois de criar a tarefa, você pode definir de quais outras ela depende.</p>
+            <p className="text-xs text-muted-foreground">Depois de criar a tarefa, você pode definir de quais outras ela depende e anexar arquivos.</p>
           )}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={aoFechar}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={salvar.isPending || !descricao.trim()}>
+            <Button carregando={salvar.isPending} type="submit" disabled={salvar.isPending || !descricao.trim()}>
               {salvar.isPending ? "Salvando..." : "Salvar"}
             </Button>
           </DialogFooter>

@@ -204,7 +204,7 @@ export function MarcoDialog({ projetoId, marco, aoFechar }: { projetoId: number;
               <Button type="button" variant="outline" onClick={aoFechar}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={salvar.isPending || !titulo.trim() || fimInvalido}>
+              <Button carregando={salvar.isPending} type="submit" disabled={salvar.isPending || !titulo.trim() || fimInvalido}>
                 {salvar.isPending ? "Salvando..." : "Salvar"}
               </Button>
             </div>

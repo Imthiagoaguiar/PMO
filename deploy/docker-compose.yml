@@ -53,6 +53,9 @@ services:
 
   api:
     <<: *backend
+    volumes:
+      - logs:/app/logs
+      - anexos:/app/anexos  # arquivos anexados às tarefas: não apague
     depends_on:
       migracoes: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -87,6 +90,16 @@ services:
     volumes:
       - logs:/app/logs
       - backups:/app/backups
+      - anexos:/app/anexos:ro  # o backup espelha os anexos em backups/anexos
+    depends_on:
+      migracoes: { condition: service_completed_successfully }
+
+  lembretes:
+    <<: *backend
+    # A cada LEMBRETES_VERIFICAR_MINUTOS confere quem tem tarefa atrasada e manda 1 e-mail por pessoa
+    # (no máximo a cada 4 h, só em dias úteis no horário comercial).
+    command: ["python", "-m", "app.lembretes"]
+    healthcheck: { disable: true }
     depends_on:
       migracoes: { condition: service_completed_successfully }
 
@@ -107,6 +120,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  anexos:
   pgdata:
   redisdata:
   logs:

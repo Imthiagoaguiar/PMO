@@ -70,10 +70,11 @@ def alvo(client, criar_usuario, login) -> Dict:
     item = client.post(f"/projetos/{p['id']}/orcamento/itens", json={"descricao": "I", "valor_orcado": "10.00"}, headers=h).json()
     lanc = client.post(f"/projetos/{p['id']}/orcamento/lancamentos",
                        json={"item_id": item["id"], "valor": "1.00", "data": "2026-01-01", "descricao": "L"}, headers=h).json()
+    anexo = client.post(f"/projetos/{p['id']}/tarefas/{tarefa['id']}/anexos", files={"arquivo": ("a.txt", b"a")}, headers=h).json()
     ids = {"projeto_id": p["id"], "fase_id": p["fases"][0]["id"], "tarefa_id": tarefa["id"],
            "comentario_id": comentario["id"], "usuario_id": membro.id, "pilar_id": p["pilares"][0]["id"],
            "rodada_id": 1, "importacao_id": 1, "dependencia_id": dep["id"], "marco_id": marco["id"],
-           "item_id": item["id"], "lancamento_id": lanc["id"]}
+           "item_id": item["id"], "lancamento_id": lanc["id"], "anexo_id": anexo["id"]}
     return {"h": h, "ids": ids}
 
 

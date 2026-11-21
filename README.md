@@ -21,6 +21,15 @@ MVP de PMO para projetos Waterfall.
 - **Orçamento**: itens (orçado, CAPEX/OPEX, pilar) e lançamentos (realizado, com data, documento e estorno); saldo,
   execução, previsão de fechamento no ritmo atual, alertas de estouro, gráficos (curva acumulada x planejado e orçado x
   realizado por item, categoria ou pilar) e exportação para Excel. Pilar com itens passa a usar esse financeiro.
+- **Andamento por botões** (0, 25, 50, 75 e 100%, com campo manual para outro valor) no diálogo da tarefa e direto
+  na linha do cronograma, clicando na barra.
+- **Anexos nas tarefas** (até 25 MB cada, 2 GB por projeto; programas e scripts recusados) e a aba **Arquivos** com o
+  histórico de todos os arquivos do projeto, inclusive de tarefas já excluídas. Os arquivos entram no backup.
+- **Gargalos**: dias de atraso acumulados por pessoa, área (pilar) e fase, pontualidade e as tarefas mais atrasadas.
+- **Apresentação em PowerPoint** (.pptx): resumo, linha do tempo com marcos e bandeiras, pilares, orçamento,
+  gargalos e pontos de atenção, com gráficos nativos (editáveis no PowerPoint).
+- **Lembrete por e-mail** para quem tem tarefa atrasada: um e-mail por pessoa com todas as atrasadas, a cada 4 h,
+  só em dias úteis das 8h às 18h. Cada pessoa pode silenciar por 24 h no menu do seu nome.
 - **Relatório em PDF** do projeto: resumo e indicadores, pilares, orçamento, linha do tempo (Gantt com marcos),
   histórico e comentários recentes.
 
@@ -141,6 +150,17 @@ cd frontend && npm run dev
 Depois de um `git pull`, rode também `pip install -r requirements-dev.lock` (API) e `npm install`
 (front), caso alguma dependência tenha mudado.
 
+### Lembretes de tarefas atrasadas
+
+Outro processo separado (como o vigia). Precisa de `RESEND_API_KEY`; sem domínio verificado no Resend,
+os e-mails só chegam no endereço da sua conta do Resend.
+
+```bash
+source .venv/bin/activate
+python -m app.lembretes                              # fica ligado: confere a cada 15 min
+python -m app.lembretes --uma-vez --ignorar-horario  # manda agora, para testar
+```
+
 ### Vigia (agente que procura erros e falhas)
 
 Processo separado que observa o sistema **rodando** e, a cada hora, gera um relatório. Ele só
@@ -155,7 +175,7 @@ python -m app.vigia --uma-vez  # uma rodada agora e sai (para testar)
 - **O que ele olha:**
   - o log da API (`logs/pmo.log`), acompanhado em tempo real com o watchdog: erros com o arquivo e a linha do código, respostas 5xx por rota, rotas lentas, picos de 429;
   - a saúde da API e se o banco está na migration mais nova;
-  - a integridade dos dados, como projeto sem as 5 fases ou tarefa ligada a pilar de outro projeto;
+  - a integridade dos dados, como fases fora de ordem, tarefa ligada a pilar de outro projeto ou dependência entre projetos;
   - alarmes de segurança (reuso de token, muitas senhas erradas), admins sem 2FA e espaço em disco.
 - **IA (opcional):** com `GROQ_API_KEY` no `.env`, a Groq correlaciona os sinais e sugere a causa
   provável e como investigar. Antes, e-mails, IPs e tokens são trocados por marcadores. Sem a chave, o

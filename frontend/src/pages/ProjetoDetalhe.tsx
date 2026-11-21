@@ -1,12 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { ArrowLeft, Download, Eye, FileText, Lock, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
+import { ArrowLeft, Download, Eye, FileText, Lock, MoreHorizontal, Pencil, Presentation, Trash2, Loader2 } from "lucide-react"
 import { useState, type FormEvent } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 
 import { BarraProgresso, Campo, Carregando, ErroCarregar, StatusBadge } from "@/components/comum"
+import { HistoricoDeArquivos } from "@/components/projeto/Anexos"
 import { Comentarios } from "@/components/projeto/Comentarios"
 import { Cronograma } from "@/components/projeto/Cronograma"
+import { Gargalos } from "@/components/projeto/Gargalos"
 import { Historico } from "@/components/projeto/Historico"
 import { LinhaDoTempo } from "@/components/projeto/LinhaDoTempo"
 import { Membros } from "@/components/projeto/Membros"
@@ -132,6 +134,7 @@ export function ProjetoDetalhe() {
   const [excluindo, setExcluindo] = useState(false)
   const [exportando, setExportando] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
+  const [gerandoPptx, setGerandoPptx] = useState(false)
 
   const mudarStatus = useMutation({
     mutationFn: (status: StatusProjeto) =>
@@ -166,6 +169,18 @@ export function ProjetoDetalhe() {
       fmt.notificarErro(erro)
     } finally {
       setGerandoPdf(false)
+    }
+  }
+
+  async function gerarApresentacao() {
+    setGerandoPptx(true)
+    try {
+      await baixarArquivo(`/projetos/${id}/apresentacao`, "apresentacao.pptx")
+      toast.success("Apresentação baixada: abra no PowerPoint (os gráficos são editáveis).")
+    } catch (erro) {
+      fmt.notificarErro(erro)
+    } finally {
+      setGerandoPptx(false)
     }
   }
 
@@ -229,10 +244,13 @@ export function ProjetoDetalhe() {
               </SelectContent>
             </Select>
           )}
-          <Button variant="outline" onClick={gerarPdf} disabled={gerandoPdf}>
+          <Button carregando={gerandoPdf} variant="outline" onClick={gerarPdf} disabled={gerandoPdf}>
             <FileText /> {gerandoPdf ? "Gerando PDF..." : "Relatório PDF"}
           </Button>
-          <Button variant="outline" onClick={exportar} disabled={exportando}>
+          <Button carregando={gerandoPptx} variant="outline" onClick={gerarApresentacao}>
+            <Presentation /> {gerandoPptx ? "Gerando slides..." : "PowerPoint"}
+          </Button>
+          <Button carregando={exportando} variant="outline" onClick={exportar} disabled={exportando}>
             <Download /> {exportando ? "Exportando..." : "Exportar Excel"}
           </Button>
           {(permissoes.editar || permissoes.gerenciar) && (
@@ -302,12 +320,14 @@ export function ProjetoDetalhe() {
       )}
 
       <Tabs defaultValue="cronograma">
-        <TabsList className="mb-4">
+        <TabsList className="mb-4 h-auto flex-wrap">
           <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
           <TabsTrigger value="pilares">Pilares</TabsTrigger>
           <TabsTrigger value="orcamento">Orçamento</TabsTrigger>
           <TabsTrigger value="linha">Linha do tempo</TabsTrigger>
+          <TabsTrigger value="gargalos">Gargalos</TabsTrigger>
           <TabsTrigger value="comentarios">Comentários</TabsTrigger>
+          <TabsTrigger value="arquivos">Arquivos</TabsTrigger>
           <TabsTrigger value="membros">Membros</TabsTrigger>
           <TabsTrigger value="historico">Histórico</TabsTrigger>
         </TabsList>
@@ -322,6 +342,12 @@ export function ProjetoDetalhe() {
         </TabsContent>
         <TabsContent value="linha">
           <LinhaDoTempo projeto={p} podeEditar={podeEditarCronograma} />
+        </TabsContent>
+        <TabsContent value="gargalos">
+          <Gargalos projetoId={p.id} />
+        </TabsContent>
+        <TabsContent value="arquivos">
+          <HistoricoDeArquivos projetoId={p.id} podeEditar={podeEditarCronograma} />
         </TabsContent>
         <TabsContent value="comentarios" className="max-w-3xl">
           <Comentarios projeto={p} />
@@ -353,6 +379,7 @@ export function ProjetoDetalhe() {
                 excluir.mutate()
               }}
             >
+              {excluir.isPending && <Loader2 className="animate-spin" aria-hidden />}
               {excluir.isPending ? "Excluindo..." : "Excluir projeto"}
             </AlertDialogAction>
           </AlertDialogFooter>

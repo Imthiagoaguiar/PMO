@@ -141,7 +141,7 @@ function AtivarDoisFatores() {
         <Campo label="Confirme sua senha" htmlFor="senha-2fa">
           <Input id="senha-2fa" type="password" autoComplete="current-password" autoFocus value={senha} onChange={(e) => setSenha(e.target.value)} />
         </Campo>
-        <Button type="submit" disabled={!senha || iniciar.isPending} className="justify-self-start">
+        <Button carregando={iniciar.isPending} type="submit" disabled={!senha || iniciar.isPending} className="justify-self-start">
           {iniciar.isPending ? "Gerando..." : "Continuar"}
         </Button>
       </form>
@@ -172,7 +172,7 @@ function AtivarDoisFatores() {
         </div>
       </div>
       <CampoCodigo valor={codigo} aoMudar={setCodigo} />
-      <Button type="submit" disabled={codigo.length !== 6 || ativar.isPending} className="justify-self-start">
+      <Button carregando={ativar.isPending} type="submit" disabled={codigo.length !== 6 || ativar.isPending} className="justify-self-start">
         {ativar.isPending ? "Verificando..." : "Ativar"}
       </Button>
     </form>

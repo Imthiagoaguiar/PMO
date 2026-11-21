@@ -80,3 +80,40 @@ def enviar_redefinicao_senha(destinatario: str, nome_destinatario: str, link: st
         "Se você não pediu, ignore este e-mail: a sua senha continua a mesma.",
         "redefinição de senha",
     )
+
+
+def enviar_lembrete_atrasadas(destinatario: str, nome_destinatario: str, tarefas: list) -> bool:
+    """
+    Um e-mail com TODAS as tarefas atrasadas da pessoa (lista de dicts: tarefa, projeto, prazo, dias,
+    percentual). Textos digitados por usuários (tarefa, projeto) vão escapados no HTML.
+    """
+    from app.config import settings as _s
+
+    quantidade = len(tarefas)
+    link = f"{_s.url_do_front}/minhas-tarefas"
+    pessoa = _linha_unica(nome_destinatario)
+    linhas_html = "".join(
+        f"<tr><td>{html.escape(_linha_unica(t['tarefa']))}</td><td>{html.escape(_linha_unica(t['projeto']))}</td>"
+        f"<td>{t['prazo']:%d/%m/%Y}</td><td style='color:#b91c1c'>{t['dias']} dia(s)</td><td>{t['percentual']}%</td></tr>"
+        for t in tarefas[:50]
+    )
+    linhas_texto = "\n".join(
+        f"- {_linha_unica(t['tarefa'])} ({_linha_unica(t['projeto'])}): prazo {t['prazo']:%d/%m/%Y}, "
+        f"{t['dias']} dia(s) de atraso, {t['percentual']}%"
+        for t in tarefas[:50]
+    )
+    mais = f"<p>…e mais {quantidade - 50} tarefa(s).</p>" if quantidade > 50 else ""
+    rodape = ("Você recebe este lembrete a cada 4 horas em dias úteis enquanto houver tarefas atrasadas. "
+              "Para pausar por um dia: no PMO, menu do seu nome → Silenciar lembretes.")
+    return _enviar(
+        destinatario,
+        f"PMO: você tem {quantidade} tarefa(s) atrasada(s)",
+        f"<p>Olá, {html.escape(pessoa)}.</p><p>Estas tarefas sob sua responsabilidade passaram do prazo:</p>"
+        "<table cellpadding='6' style='border-collapse:collapse'><tr><th align='left'>Tarefa</th>"
+        "<th align='left'>Projeto</th><th align='left'>Prazo</th><th align='left'>Atraso</th><th align='left'>Feito</th></tr>"
+        f"{linhas_html}</table>{mais}"
+        f'<p><a href="{html.escape(link, quote=True)}">Abrir minhas tarefas</a></p><p style="color:#64748b">{rodape}</p>',
+        f"Olá, {pessoa}.\n\nEstas tarefas sob sua responsabilidade passaram do prazo:\n{linhas_texto}\n\n"
+        f"Abrir minhas tarefas: {link}\n\n{rodape}",
+        "lembrete de tarefas atrasadas",
+    )

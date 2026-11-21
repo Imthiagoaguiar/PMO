@@ -152,6 +152,9 @@ class Usuario(Base):
     # Vai no token de acesso (claim "ver"). Trocar a senha ou "encerrar sessões" incrementa o valor
     # e todos os tokens já emitidos deixam de valer na hora (comparação exata, sem depender do relógio).
     versao_sessao: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    # Lembrete de tarefas atrasadas (app/lembretes.py): no máximo a cada 4 h, e a pessoa pode silenciar.
+    lembrete_enviado_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    lembretes_silenciados_ate: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # Verificação em duas etapas (TOTP). O segredo fica cifrado (app/cripto.py): um vazamento do
     # banco não permite gerar códigos. Enquanto totp_ativo é False, o segredo é só uma tentativa
@@ -368,6 +371,8 @@ class Tarefa(Base):
     percentual_conclusao: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # Frente de trabalho (TI, Suprimentos...): cruza as fases. Excluir o pilar não exclui a tarefa.
     pilar_id: Mapped[Optional[int]] = mapped_column(ForeignKey("pilares.id", ondelete="SET NULL"), index=True)
+    # Quando chegou a 100% (volta a nulo se for reaberta): mede quem/qual área entrega atrasado (gargalos).
+    concluida_em: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     versao: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")  # ver Projeto.versao
 
     __mapper_args__ = {"version_id_col": versao}
@@ -547,6 +552,36 @@ class LancamentoOrcamento(Base):
     criado_por: Mapped[Optional["Usuario"]] = relationship()
 
     __table_args__ = (CheckConstraint("valor <> 0", name="ck_lancamento_valor_nao_zero"),)
+
+
+class AnexoTarefa(Base):
+    """
+    Arquivo anexado a uma tarefa. O conteúdo fica no disco (ANEXOS_DIR/<projeto>/<chave>); aqui, os dados.
+    Excluir a tarefa NÃO apaga o anexo: ele continua no histórico de arquivos do projeto (tarefa_id nulo,
+    com o nome da tarefa guardado). Excluir o projeto apaga tudo (o arquivo órfão sai na limpeza).
+    """
+
+    __tablename__ = "anexos_tarefas"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    projeto_id: Mapped[int] = mapped_column(
+        ForeignKey("projetos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tarefa_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tarefas.id", ondelete="SET NULL"), index=True)
+    tarefa_descricao: Mapped[str] = mapped_column(String(500), nullable=False)
+    nome_original: Mapped[str] = mapped_column(String(255), nullable=False)
+    chave: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)  # nome no disco (aleatório)
+    tamanho: Mapped[int] = mapped_column(Integer, nullable=False)
+    tipo_mime: Mapped[str] = mapped_column(String(127), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    enviado_por_id: Mapped[Optional[int]] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"))
+    enviado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    enviado_por: Mapped[Optional["Usuario"]] = relationship()
+
+    __table_args__ = (CheckConstraint("tamanho > 0", name="ck_anexo_tamanho_positivo"),)
 
 
 # ---------- Colaboração ----------

@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app import auditoria, dois_fatores, senhas, services
 from app.config import settings
 from app.database import get_db
-from app.deps import get_usuario_sessao
+from app.deps import get_usuario_atual, get_usuario_sessao
 from app.integracoes import notificacoes
 from app.models import PapelUsuario, ProvedorAuth, RefreshToken, Usuario
 from app.rate_limit import (
@@ -51,6 +51,7 @@ from app.schemas import (
     LoginDoisFatores,
     PedidoRecebido,
     RedefinirSenhaPorLink,
+    SilenciarLembretes,
     StatusDoisFatores,
     TokenResposta,
     UsuarioRead,
@@ -370,6 +371,30 @@ def alterar_senha(
     auditoria.registrar(db, "auth.senha_alterada", "usuario", usuario.id, usuario=usuario)
     db.commit()
     _apagar_cookie(response)
+
+
+# ---------- Lembretes de tarefas atrasadas ----------
+
+
+@router.post("/lembretes/silenciar", response_model=UsuarioRead)
+def silenciar_lembretes(
+    payload: SilenciarLembretes,
+    usuario: Usuario = Depends(get_usuario_atual),
+    db: Session = Depends(get_db),
+) -> Usuario:
+    """Para de receber o e-mail de tarefas atrasadas por `horas` (padrão: 24)."""
+    usuario.lembretes_silenciados_ate = agora_utc() + timedelta(hours=payload.horas)
+    auditoria.registrar(db, "lembretes.silenciados", "usuario", usuario.id, usuario=usuario, detalhes={"horas": payload.horas})
+    db.commit()
+    return usuario
+
+
+@router.delete("/lembretes/silenciar", response_model=UsuarioRead)
+def reativar_lembretes(usuario: Usuario = Depends(get_usuario_atual), db: Session = Depends(get_db)) -> Usuario:
+    usuario.lembretes_silenciados_ate = None
+    auditoria.registrar(db, "lembretes.reativados", "usuario", usuario.id, usuario=usuario)
+    db.commit()
+    return usuario
 
 
 # ---------- Esqueci minha senha (link por e-mail) ----------

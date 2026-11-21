@@ -1,4 +1,6 @@
-import { ChevronDown, FolderKanban, KeyRound, ListChecks, LogOut, Radar, ScrollText, ShieldCheck, Users } from "lucide-react"
+import { useIsFetching, useIsMutating, useMutation } from "@tanstack/react-query"
+import { Bell, BellOff, ChevronDown, FolderKanban, KeyRound, ListChecks, Loader2, LogOut, Radar, ScrollText, ShieldCheck, Users } from "lucide-react"
+import { toast } from "sonner"
 import { useState } from "react"
 import { NavLink, Outlet, useNavigate } from "react-router"
 
@@ -14,7 +16,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { api } from "@/lib/api"
 import { useAuth, useUsuario } from "@/lib/auth"
+import * as fmt from "@/lib/formato"
+import type { Usuario } from "@/lib/tipos"
 import { cn } from "@/lib/utils"
 
 function ItemMenu({ para, icone: Icone, children }: { para: string; icone: typeof Users; children: string }) {
@@ -36,7 +41,17 @@ function ItemMenu({ para, icone: Icone, children }: { para: string; icone: typeo
 
 export function Layout() {
   const usuario = useUsuario()
-  const { sair } = useAuth()
+  const { sair, atualizarUsuario } = useAuth()
+  const ocupado = useIsFetching() + useIsMutating() > 0
+  const silenciado = !!usuario.lembretes_silenciados_ate // a API só devolve a data enquanto o silêncio vale
+  const lembretes = useMutation({
+    mutationFn: () => api<Usuario>("/auth/lembretes/silenciar", silenciado ? { method: "DELETE" } : { method: "POST", json: { horas: 24 } }),
+    onSuccess: (u) => {
+      atualizarUsuario(u)
+      toast.success(silenciado ? "Lembretes de tarefas atrasadas reativados." : "Lembretes silenciados por 24 horas.")
+    },
+    onError: fmt.notificarErro,
+  })
   const navigate = useNavigate()
   const [alterandoSenha, setAlterandoSenha] = useState(false)
   const [configurando2fa, setConfigurando2fa] = useState(false)
@@ -64,6 +79,11 @@ export function Layout() {
             {admin && <ItemMenu para="/auditoria" icone={ScrollText}>Auditoria</ItemMenu>}
             {usuario.pode_ver_vigia && <ItemMenu para="/vigia" icone={Radar}>Vigia</ItemMenu>}
           </nav>
+          {/* Algo carregando ou salvando em qualquer parte da tela: o usuário vê que o sistema está trabalhando. */}
+          <span role="status" aria-live="polite" className={cn("flex items-center gap-1.5 text-xs text-muted-foreground transition-opacity", ocupado ? "opacity-100" : "opacity-0")}>
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+            <span className="hidden sm:inline">{ocupado ? "Atualizando..." : ""}</span>
+          </span>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="gap-2">
@@ -92,6 +112,15 @@ export function Layout() {
                   {usuario.dois_fatores_ativo && <span className="ml-auto text-xs text-emerald-600">ativa</span>}
                 </DropdownMenuItem>
               )}
+              <DropdownMenuItem onSelect={() => lembretes.mutate()} disabled={lembretes.isPending}>
+                {silenciado ? <Bell /> : <BellOff />}
+                {silenciado ? "Reativar lembretes" : "Silenciar lembretes (24 h)"}
+                {silenciado && (
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    até {new Date(usuario.lembretes_silenciados_ate!).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                )}
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={encerrar}>
                 <LogOut /> Sair
               </DropdownMenuItem>

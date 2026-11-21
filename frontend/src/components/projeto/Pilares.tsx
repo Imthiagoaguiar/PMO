@@ -326,7 +326,7 @@ function PilarDialog({ projetoId, pilar, aoFechar }: { projetoId: number; pilar?
             <Button type="button" variant="outline" onClick={aoFechar} disabled={salvar.isPending}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={salvar.isPending || !nome.trim()}>
+            <Button carregando={salvar.isPending} type="submit" disabled={salvar.isPending || !nome.trim()}>
               {salvar.isPending ? "Salvando..." : "Salvar"}
             </Button>
           </DialogFooter>

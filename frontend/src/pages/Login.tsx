@@ -99,7 +99,7 @@ export function Login() {
                   </Link>
                 </Campo>
                 {alerta}
-                <Button type="submit" disabled={enviando}>
+                <Button carregando={enviando} type="submit" disabled={enviando}>
                   {enviando ? "Entrando..." : "Entrar"}
                 </Button>
               </form>
@@ -149,7 +149,7 @@ export function Login() {
                   </Campo>
                 )}
                 {alerta}
-                <Button type="submit" disabled={enviando || (usandoRecuperacao ? codigo.trim().length < 10 : codigo.length !== 6)}>
+                <Button carregando={enviando} type="submit" disabled={enviando || (usandoRecuperacao ? codigo.trim().length < 10 : codigo.length !== 6)}>
                   {enviando ? "Verificando..." : "Verificar"}
                 </Button>
                 <div className="flex justify-between text-sm">

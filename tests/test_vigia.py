@@ -214,8 +214,8 @@ def test_sistema_saudavel_nao_gera_achado():
     ({"saude": {"ok": False, "status": 503, "corpo": {"banco": "indisponivel"}}}, "api_fora_do_ar", "critica"),
     ({"saude": {"ok": False, "status": None, "erro": "ConnectError"}}, "api_desligada_dev", "baixa"),
     ({"migracao": {"em_dia": False, "banco": "a", "codigo": "b"}}, "migracao_pendente", "alta"),
-    ({"integridade": [{"codigo": "projeto_sem_5_fases", "descricao": "x", "quantidade": 1, "exemplos": [7]}]},
-     "integridade_projeto_sem_5_fases", "critica"),
+    ({"integridade": [{"codigo": "fases_demais_ou_fora_de_ordem", "descricao": "x", "quantidade": 1, "exemplos": [7]}]},
+     "integridade_fases_demais_ou_fora_de_ordem", "critica"),
     ({"seguranca": {"eventos": {"auth.reuso_refresh_token": 2}, "ips_distintos_com_falha": 0}}, "reuso_de_token", "alta"),
     ({"seguranca": {"eventos": {"auth.login_falhou": 80}, "ips_distintos_com_falha": 40}}, "muitas_falhas_de_login", "media"),
     ({"higiene": {"refresh_tokens_para_limpar": 0, "admins_sem_2fa": 1}}, "admin_sem_2fa", "media"),
@@ -255,7 +255,7 @@ def projeto(client, criar_usuario, login):
     p = client.post("/projetos/manual", json={"nome_projeto": "ERP"}, headers=h).json()
     q = client.post("/projetos/manual", json={"nome_projeto": "Outro"}, headers=h).json()
     t = client.post(f"/projetos/{p['id']}/fases/{p['fases'][0]['id']}/tarefas", json={"descricao": "T"}, headers=h).json()
-    return {"p": p, "q": q, "tarefa": t, "fora": outro.id}
+    return {"p": p, "q": q, "tarefa": t, "fora": outro.id, "h": h}
 
 
 def test_integridade_limpa_quando_a_api_e_usada(projeto):
@@ -263,15 +263,27 @@ def test_integridade_limpa_quando_a_api_e_usada(projeto):
         assert sondas.integridade(db) == []
 
 
+def test_fases_editadas_pela_api_nao_disparam_alarme(client, projeto):
+    """Fases criadas, excluídas ou um projeto em branco são normais desde 20/11/2026."""
+    q = projeto["q"]
+    h = projeto["h"]
+    client.delete(f"/projetos/{q['id']}/fases/{q['fases'][1]['id']}", headers=h)
+    client.post(f"/projetos/{q['id']}/fases", json={"titulo": "Homologação"}, headers=h)
+    client.post("/projetos/manual", json={"nome_projeto": "Em branco", "modelo_fases": "em_branco"}, headers=h)
+    with SessionLocal() as db:
+        assert sondas.integridade(db) == []
+
+
 def test_integridade_acha_dados_corrompidos_por_fora_da_api(projeto):
     q, t = projeto["q"], projeto["tarefa"]
     with SessionLocal() as db:
-        db.execute(text("DELETE FROM fases WHERE id = :f"), {"f": q["fases"][4]["id"]})
+        # Por fora da API: um "buraco" na ordem (1, 2, 3, 4, 9). Excluir uma fase pela API renumera.
+        db.execute(text("UPDATE fases SET ordem_sequencia = 9 WHERE id = :f"), {"f": q["fases"][4]["id"]})
         db.execute(text("UPDATE tarefas SET pilar_id = :pi, responsavel_id = :u WHERE id = :t"),
                    {"pi": q["pilares"][0]["id"], "u": projeto["fora"], "t": t["id"]})
         db.commit()
         achados = {i["codigo"]: i for i in sondas.integridade(db)}
-    assert achados["projeto_sem_5_fases"]["exemplos"] == [q["id"]]
+    assert achados["fases_demais_ou_fora_de_ordem"]["exemplos"] == [q["id"]]
     assert achados["tarefa_com_pilar_de_outro_projeto"]["exemplos"] == [t["id"]]
     assert achados["responsavel_fora_do_projeto"]["exemplos"] == [t["id"]]
 

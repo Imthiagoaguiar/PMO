@@ -1,9 +1,10 @@
 import { useInfiniteQuery, useMutation } from "@tanstack/react-query"
-import { CalendarClock, ListOrdered, MessageSquare, Pencil, Plus, Trash2 } from "lucide-react"
+import { CalendarClock, ListOrdered, MessageSquare, Pencil, Plus, Trash2, Loader2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
 import { BarraProgresso, corFase, Vazio } from "@/components/comum"
+import { BotoesAndamento } from "@/components/projeto/BotoesAndamento"
 import { SeloDependencia, useMapaDependencias, type MapaDependencias } from "@/components/projeto/Dependencias"
 import { GerenciarFases } from "@/components/projeto/Fases"
 import { ComentariosDialog } from "@/components/projeto/Comentarios"
@@ -19,12 +20,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { api } from "@/lib/api"
+import { api, ehConflitoDeVersao } from "@/lib/api"
 import { useAtualizarProjeto } from "@/lib/consultas"
 import * as fmt from "@/lib/formato"
 import { cn } from "@/lib/utils"
@@ -101,7 +103,7 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
         {podeEditar && (
           <div className="ml-auto flex gap-2">
             {temDependencias && (
-              <Button size="sm" variant="outline" onClick={() => reprogramar.mutate()} disabled={reprogramar.isPending}>
+              <Button carregando={reprogramar.isPending} size="sm" variant="outline" onClick={() => reprogramar.mutate()} disabled={reprogramar.isPending}>
                 <CalendarClock /> {reprogramar.isPending ? "Reprogramando..." : "Reprogramar pelas dependências"}
               </Button>
             )}
@@ -175,6 +177,7 @@ export function Cronograma({ projeto, indicadores, membros, podeEditar }: Props)
                 if (excluindo) excluir.mutate(excluindo)
               }}
             >
+              {excluir.isPending && <Loader2 className="animate-spin" aria-hidden />}
               {excluir.isPending ? "Excluindo..." : "Excluir"}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -310,7 +313,7 @@ function CartaoFase({ projetoId, fase, indice, filtroPilar, indicadores, podeEdi
                     {vencida && <span className="sr-only"> (atrasada)</span>}
                   </TableCell>
                   <TableCell>
-                    <BarraProgresso valor={t.percentual_conclusao} />
+                    {podeEditar ? <AndamentoRapido projetoId={projetoId} tarefa={t} /> : <BarraProgresso valor={t.percentual_conclusao} />}
                   </TableCell>
                   <TableCell className="pr-6">
                     <div className="flex justify-end gap-1">
@@ -350,11 +353,49 @@ function CartaoFase({ projetoId, fase, indice, filtroPilar, indicadores, podeEdi
           <span>
             Mostrando {tarefas.length.toLocaleString("pt-BR")} de {lista.total.toLocaleString("pt-BR")} tarefas
           </span>
-          <Button size="sm" variant="outline" onClick={lista.carregarMais} disabled={lista.carregandoMais}>
+          <Button carregando={lista.carregandoMais} size="sm" variant="outline" onClick={lista.carregarMais} disabled={lista.carregandoMais}>
             {lista.carregandoMais ? "Carregando..." : `Carregar mais ${Math.min(POR_PAGINA, lista.total - tarefas.length).toLocaleString("pt-BR")}`}
           </Button>
         </div>
       )}
     </Card>
+  )
+}
+
+/** Clicar no andamento abre os botões 0/25/50/75/100%: atualiza sem abrir o diálogo da tarefa. */
+function AndamentoRapido({ projetoId, tarefa }: { projetoId: number; tarefa: Tarefa }) {
+  const atualizar = useAtualizarProjeto(projetoId)
+  const [aberto, setAberto] = useState(false)
+  const mudar = useMutation({
+    mutationFn: (valor: number) =>
+      api<Tarefa>(`/projetos/${projetoId}/tarefas/${tarefa.id}`, {
+        method: "PATCH", json: { percentual_conclusao: valor, versao: tarefa.versao },
+      }),
+    onSuccess: (t) => {
+      atualizar()
+      setAberto(false)
+      toast.success(`“${t.descricao}”: ${t.percentual_conclusao}%`)
+    },
+    onError: (erro) => {
+      fmt.notificarErro(erro) // ex.: dependência ainda não terminada, ou alguém editou antes (409)
+      if (ehConflitoDeVersao(erro)) atualizar()
+    },
+  })
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button type="button" className="w-full rounded px-1 py-1 hover:bg-accent" aria-label={`Andamento de ${tarefa.descricao}: ${tarefa.percentual_conclusao}%. Alterar`}>
+          {mudar.isPending ? (
+            <span className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /> Salvando...</span>
+          ) : (
+            <BarraProgresso valor={tarefa.percentual_conclusao} />
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-auto p-2">
+        <BotoesAndamento valor={tarefa.percentual_conclusao} tamanho="compacto" desabilitado={mudar.isPending}
+          aoEscolher={(v) => v !== tarefa.percentual_conclusao && mudar.mutate(v)} />
+      </PopoverContent>
+    </Popover>
   )
 }

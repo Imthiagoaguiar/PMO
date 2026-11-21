@@ -106,6 +106,23 @@ def registros_velhos(db: Session, resultado: Resultado, simular: bool) -> None:
 # ---------- Máquina de desenvolvimento ----------
 
 
+def anexos_orfaos(db: Session, resultado: Resultado, simular: bool) -> None:
+    """Arquivos de anexo sem registro no banco (projeto excluído, envio interrompido) há mais de 1 h."""
+    from sqlalchemy import select
+
+    from app import anexos
+    from app.models import AnexoTarefa
+
+    sobras = anexos.orfaos(set(db.scalars(select(AnexoTarefa.chave))))
+    if not sobras:
+        return
+    tamanho = sum(a.stat().st_size for a in sobras)
+    if not simular:
+        for arquivo in sobras:
+            arquivo.unlink(missing_ok=True)
+    resultado.itens.append(f"{len(sobras)} anexo(s) órfão(s) ({tamanho / 1e6:.0f} MB)")
+
+
 def caches_de_desenvolvimento(resultado: Resultado, simular: bool,
                               executar: Callable[..., object] = subprocess.run) -> None:
     for nome, pasta in CACHES_PERMITIDOS.items():
@@ -158,6 +175,7 @@ def executar(agora: bool = False, simular: bool = False, caches: bool = False) -
     logs_rotacionados([settings.log_arquivo, settings.log_arquivo_trabalhador], resultado, simular)
     with SessionLocal() as db:
         registros_velhos(db, resultado, simular)
+        anexos_orfaos(db, resultado, simular)
     if caches:
         caches_de_desenvolvimento(resultado, simular)
 

@@ -125,6 +125,18 @@ class Settings(BaseSettings):
     groq_modelo: str = "openai/gpt-oss-120b"
     groq_timeout_segundos: float = 30.0
 
+    # Anexos das tarefas: no disco do servidor (volume no Docker; espelhados no backup).
+    anexos_dir: str = "anexos"
+    anexos_max_mb: int = Field(25, ge=1, le=500)
+    anexos_max_projeto_mb: int = Field(2048, ge=10, le=100_000)  # cota por projeto
+
+    # Lembrete por e-mail de tarefas atrasadas (python -m app.lembretes): um por pessoa, com todas as atrasadas,
+    # no máximo a cada LEMBRETES_INTERVALO_HORAS, só em dias úteis entre LEMBRETES_HORA_INICIO e _FIM (fuso_horario).
+    lembretes_intervalo_horas: int = Field(4, ge=1, le=168)
+    lembretes_hora_inicio: int = Field(8, ge=0, le=23)
+    lembretes_hora_fim: int = Field(18, ge=1, le=24)
+    lembretes_verificar_minutos: int = Field(15, ge=1, le=240)  # de quanto em quanto tempo o processo confere
+
     resend_api_key: Optional[str] = None
     # Em teste, o Resend só entrega a partir de onboarding@resend.dev (e só para o e-mail da sua conta).
     email_remetente: str = "PMO <onboarding@resend.dev>"

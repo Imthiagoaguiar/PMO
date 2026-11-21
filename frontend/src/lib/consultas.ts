@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useCallback } from "react"
 
 import { api } from "@/lib/api"
-import type { Dependencia, Indicadores, Marco, Membro, Pilar, Projeto, ResumoOrcamento } from "@/lib/tipos"
+import type { Dependencia, Gargalos, Indicadores, Marco, Membro, Pilar, Projeto, ResumoOrcamento } from "@/lib/tipos"
 
 export const chaves = {
   projeto: (id: number) => ["projeto", id] as const,
@@ -12,6 +12,7 @@ export const chaves = {
   dependencias: (id: number) => ["projeto", id, "dependencias"] as const,
   marcos: (id: number) => ["projeto", id, "marcos"] as const,
   orcamento: (id: number) => ["projeto", id, "orcamento"] as const,
+  gargalos: (id: number) => ["projeto", id, "gargalos"] as const,
   comentarios: (id: number, filtro: string) => ["projeto", id, "comentarios", filtro] as const,
   historico: (id: number, offset: number) => ["projeto", id, "historico", offset] as const,
 }
@@ -42,6 +43,10 @@ export function useMarcos(id: number) {
 
 export function useOrcamento(id: number) {
   return useQuery({ queryKey: chaves.orcamento(id), queryFn: () => api<ResumoOrcamento>(`/projetos/${id}/orcamento`) })
+}
+
+export function useGargalos(id: number) {
+  return useQuery({ queryKey: chaves.gargalos(id), queryFn: () => api<Gargalos>(`/projetos/${id}/gargalos`) })
 }
 
 /** Depois de qualquer alteração: recarrega projeto, indicadores, membros e histórico. */

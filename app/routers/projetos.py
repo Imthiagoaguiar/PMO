@@ -9,11 +9,11 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from app import auditoria, fila, idempotencia, orcamento, relatorio, services, tempo
+from app import anexos, apresentacao, auditoria, fila, gargalos, idempotencia, orcamento, relatorio, services, tempo
 from app.config import settings
 from app.routers.importacoes import ler_importacao
 from app.database import get_db
@@ -37,6 +37,7 @@ from app.deps import (
     salvar,
 )
 from app.models import (
+    AnexoTarefa,
     Auditoria,
     Comentario,
     Fase,
@@ -51,6 +52,7 @@ from app.models import (
 )
 from app.rate_limit import limite_ia, limite_importacao, limite_relatorio
 from app.schemas import (
+    Gargalos,
     MembroAlterar,
     MembroRead,
     PermissoesProjeto,
@@ -351,6 +353,17 @@ def indicadores_projeto(
     return services.calcular_indicadores(db, projeto)
 
 
+@router.get("/{projeto_id}/gargalos", response_model=Gargalos)
+def gargalos_projeto(
+    projeto_id: IdPath,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+) -> Gargalos:
+    """Atraso acumulado por fase, pilar e pessoa, e as tarefas mais atrasadas (dias corridos)."""
+    projeto = obter_projeto_visivel(db, projeto_id, usuario)
+    return gargalos.calcular(db, projeto, tempo.hoje())
+
+
 @router.get(
     "/{projeto_id}/exportar",
     response_class=Response,
@@ -423,6 +436,56 @@ def relatorio_pdf(
     )
 
 
+MIME_PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+@router.get(
+    "/{projeto_id}/apresentacao",
+    response_class=Response,
+    responses={200: {"content": {MIME_PPTX: {}}, "description": "Apresentação do projeto em PowerPoint"}},
+)
+def apresentacao_pptx(
+    projeto_id: IdPath,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+) -> Response:
+    """
+    Slides 16:9 para apresentar o projeto: resumo, linha do tempo com marcos e bandeiras, pilares,
+    orçamento, gargalos e pontos de atenção. Gráficos nativos (editáveis no PowerPoint).
+    """
+    limite_relatorio.por_usuario(usuario.id)
+    projeto = obter_projeto_visivel(db, projeto_id, usuario)
+    hoje = tempo.hoje()
+    indicadores = services.calcular_indicadores(db, projeto, hoje)
+    pct = {f.fase_id: f.percentual_conclusao for f in indicadores.fases}
+    periodo = dict((fid, (ini, fim)) for fid, ini, fim in db.execute(
+        select(Tarefa.fase_id, func.min(Tarefa.data_inicio), func.max(Tarefa.data_fim))
+        .join(Fase).where(Fase.projeto_id == projeto.id).group_by(Tarefa.fase_id)
+    ))
+    fases = [(f.titulo, *periodo.get(f.id, (None, None)), pct.get(f.id, 0.0)) for f in projeto.fases]
+    atrasadas = [
+        (t.descricao, nome or t.responsavel, t.data_fim, (hoje - t.data_fim).days)
+        for t, nome in db.execute(
+            select(Tarefa, Usuario.nome).join(Fase).outerjoin(Usuario, Usuario.id == Tarefa.responsavel_id)
+            .where(Fase.projeto_id == projeto.id, Tarefa.data_fim < hoje, Tarefa.percentual_conclusao < 100)
+            .order_by(Tarefa.data_fim, Tarefa.id).limit(10)
+        )
+    ]
+    conteudo = apresentacao.gerar_pptx(apresentacao.DadosApresentacao(
+        projeto=projeto, dono=projeto.dono.nome, indicadores=indicadores,
+        pilares=services.calcular_pilares(db, projeto, services.listar_pilares(db, projeto.id), hoje),
+        orcamento=orcamento.resumo(db, projeto, hoje), gargalos=gargalos.calcular(db, projeto, hoje),
+        marcos=list(projeto.marcos), fases=fases, atrasadas=atrasadas,
+        gerado_por=usuario.nome, agora_utc=tempo.agora_utc(), hoje=hoje,
+    ))
+    auditoria.registrar(db, "projeto.apresentacao", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id)
+    salvar(db)
+    return Response(
+        content=conteudo, media_type=MIME_PPTX,
+        headers={"Content-Disposition": content_disposition(f"Apresentação - {projeto.nome_projeto}.pptx")},
+    )
+
+
 @router.get("/{projeto_id}/historico", response_model=Pagina[AuditoriaRead])
 def historico_projeto(
     projeto_id: IdPath,
@@ -475,12 +538,14 @@ def excluir_projeto(
 ) -> None:
     """Exclui o projeto com fases, tarefas e membros. Não pode ser desfeito (o histórico fica)."""
     projeto = obter_projeto_gerenciavel(db, projeto_id, usuario)
+    chaves = list(db.scalars(select(AnexoTarefa.chave).where(AnexoTarefa.projeto_id == projeto.id)))
     auditoria.registrar(
         db, "projeto.excluido", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id,
-        detalhes={"nome_projeto": projeto.nome_projeto},
+        detalhes={"nome_projeto": projeto.nome_projeto, "anexos": len(chaves)},
     )
     db.delete(projeto)
     salvar(db)
+    anexos.apagar(projeto_id, chaves)  # só depois do commit: se falhar, o arquivo sai na limpeza de órfãos
 
 
 # ---------- Membros ----------
@@ -594,11 +659,14 @@ def content_disposition(nome: str) -> str:
     RFC 6266: `filename` só em ASCII (navegadores antigos) e `filename*` com o nome real em UTF-8,
     para "Implantação São Paulo.xlsx" não virar "Implantacao_Sao_Paulo.xlsx".
     """
-    base, _, extensao = nome.rpartition(".")
+    base, ponto, extensao = nome.rpartition(".")
+    if not ponto:  # sem extensão ("LEIAME"): o nome inteiro é a base
+        base, extensao = nome, ""
+    sufixo = f".{extensao}" if extensao else ""
     real = re.sub(r'[\x00-\x1f\x7f"\\/]+', "_", base).strip()[:150] or "projeto"
     return (
-        f'attachment; filename="{_nome_arquivo(base)}.{extensao}"; '
-        f"filename*=UTF-8''{quote(real + '.' + extensao)}"
+        f'attachment; filename="{_nome_arquivo(base)}{sufixo}"; '
+        f"filename*=UTF-8''{quote(real + sufixo)}"
     )
 
 

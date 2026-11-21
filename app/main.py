@@ -11,7 +11,7 @@ from app.auditoria import ip_requisicao
 from app.config import settings
 from app.database import engine
 from app.limites import KB, MB, LimiteCorpo, LimiteSimultaneas, RecusaNul
-from app.routers import auditoria, auth, comentarios, dependencias, fases, importacoes, marcos, orcamento, pilares, projetos, tarefas, usuarios, vigia
+from app.routers import anexos, auditoria, auth, comentarios, dependencias, fases, importacoes, marcos, orcamento, pilares, projetos, tarefas, usuarios, vigia
 
 EM_PRODUCAO = settings.ambiente == "prod"
 
@@ -42,7 +42,10 @@ app.add_middleware(
 # Importação: IMPORTACAO_MAX_MB de planilha (20 MB) + a sobra do multipart.
 # Ordem: o último adicionado é o mais externo. LimiteCorpo corta o tamanho ANTES de o RecusaNul ler o corpo.
 app.add_middleware(RecusaNul)
-app.add_middleware(LimiteCorpo, padrao=1 * MB, por_rota={"/projetos/importar": settings.importacao_max_mb * MB + 64 * KB})
+app.add_middleware(
+    LimiteCorpo, padrao=1 * MB, por_rota={"/projetos/importar": settings.importacao_max_mb * MB + 64 * KB},
+    por_padrao={r"/projetos/\d+/tarefas/\d+/anexos": settings.anexos_max_mb * MB + 64 * KB},
+)
 # Fila de entrada: no máximo tantas requisições ao mesmo tempo quantas conexões o pool tem (ver
 # app/limites.py). Fica DENTRO do registro, para os 503 de fila cheia aparecerem no log (e no vigia).
 app.add_middleware(LimiteSimultaneas, maximo=settings.db_pool_size + settings.db_max_overflow,
@@ -127,6 +130,7 @@ app.include_router(fases.router)
 app.include_router(dependencias.router)
 app.include_router(marcos.router)
 app.include_router(orcamento.router)
+app.include_router(anexos.router)
 app.include_router(auditoria.router)
 app.include_router(vigia.router)
 app.include_router(importacoes.router)

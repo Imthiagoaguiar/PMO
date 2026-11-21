@@ -1,4 +1,6 @@
 import os
+import shutil
+import tempfile
 
 # Configuração precisa existir ANTES de importar a aplicação.
 # Padrão: SQLite em memória (rápido, some ao fim da execução; chaves estrangeiras ligadas em app/database.py).
@@ -13,6 +15,7 @@ os.environ["LOG_ARQUIVO"] = ""  # os testes não escrevem em logs/pmo.log
 os.environ["LOG_ARQUIVO_TRABALHADOR"] = ""
 os.environ["LOG_ARQUIVO_LIMPEZA"] = ""
 os.environ["LOG_ARQUIVO_BACKUP"] = ""
+os.environ["ANEXOS_DIR"] = tempfile.mkdtemp(prefix="pmo-anexos-teste-")  # apagada no fim da sessão
 os.environ["BACKUP_DIR"] = ""  # o vigia não cobra backup nos testes (tests/test_backup.py liga)
 os.environ["LIMITES_BACKEND"] = "memoria"  # tests/test_limites_redis.py testa o Redis
 # Integrações externas DESLIGADAS, mesmo com chaves no .env: os testes nunca mandam e-mail (Resend),
@@ -107,3 +110,9 @@ def postar_importacao(client, url: str, **kwargs):
         return _RespostaImportacao(422, {"detail": {"mensagem": imp["mensagem"], "erros": imp["erros"]},
                                          "importacao": imp}, r.headers)
     return r
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _pasta_de_anexos_temporaria():
+    yield
+    shutil.rmtree(os.environ["ANEXOS_DIR"], ignore_errors=True)

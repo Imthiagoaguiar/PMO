@@ -425,7 +425,7 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
             <Button type="button" variant="outline" onClick={fechar} disabled={ocupado}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={desabilitado}>
+            <Button type="submit" disabled={desabilitado} carregando={ocupado || processando}>
               {aba === "ia" && !sugestao && <Sparkles />}
               {textoBotao}
             </Button>

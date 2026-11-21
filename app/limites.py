@@ -8,7 +8,8 @@ Em produção, configure o mesmo limite no proxy reverso (ex.: nginx `client_max
 """
 
 import json
-from typing import Any, Dict
+import re
+from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl
 
 from starlette.exceptions import HTTPException
@@ -20,17 +21,26 @@ MB = 1024 * KB
 
 
 class LimiteCorpo:
-    def __init__(self, app: ASGIApp, padrao: int, por_rota: Dict[str, int]) -> None:
+    """`por_rota`: caminho exato -> limite; `por_padrao`: expressão regular do caminho -> limite (rotas com ids)."""
+
+    def __init__(self, app: ASGIApp, padrao: int, por_rota: Dict[str, int],
+                 por_padrao: Optional[Dict[str, int]] = None) -> None:
         self.app = app
         self.padrao = padrao
         self.por_rota = por_rota
+        self.por_padrao = [(re.compile(f"^{regex}$"), limite) for regex, limite in (por_padrao or {}).items()]
+
+    def _limite(self, caminho: str) -> int:
+        if caminho in self.por_rota:
+            return self.por_rota[caminho]
+        return next((limite for regex, limite in self.por_padrao if regex.match(caminho)), self.padrao)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
-        limite = self.por_rota.get(scope["path"], self.padrao)
+        limite = self._limite(scope["path"])
         cabecalhos = dict(scope.get("headers") or [])
         declarado = cabecalhos.get(b"content-length")
         if declarado is not None:

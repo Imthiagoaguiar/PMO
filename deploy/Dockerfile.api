@@ -17,8 +17,8 @@ COPY alembic.ini .
 COPY migrations ./migrations
 COPY app ./app
 
-# Nunca roda como root. logs/ e backups/ viram volumes no docker-compose.
-RUN useradd --create-home --uid 10001 pmo && mkdir -p logs backups && chown -R pmo:pmo /app
+# Nunca roda como root. logs/, backups/ e anexos/ viram volumes no docker-compose.
+RUN useradd --create-home --uid 10001 pmo && mkdir -p logs backups anexos && chown -R pmo:pmo /app
 USER pmo
 
 EXPOSE 8000

@@ -112,7 +112,7 @@ function NovoUsuario({ aoFechar }: { aoFechar: () => void }) {
             <Button type="button" variant="outline" onClick={aoFechar}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={criar.isPending}>
+            <Button carregando={criar.isPending} type="submit" disabled={criar.isPending}>
               {criar.isPending ? "Criando..." : "Criar usuário"}
             </Button>
           </DialogFooter>
@@ -158,7 +158,7 @@ function RedefinirSenha({ usuario, aoFechar }: { usuario: Usuario; aoFechar: () 
             <Button type="button" variant="outline" onClick={aoFechar}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={redefinir.isPending || senha.length < 12}>
+            <Button carregando={redefinir.isPending} type="submit" disabled={redefinir.isPending || senha.length < 12}>
               {redefinir.isPending ? "Redefinindo..." : "Redefinir senha"}
             </Button>
           </DialogFooter>

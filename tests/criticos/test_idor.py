@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.main import app
 from app.models import (
-    Auditoria, Comentario, DependenciaTarefa, Fase, ItemOrcamento, LancamentoOrcamento, MarcoLinhaTempo, PapelUsuario,
+    AnexoTarefa, Auditoria, Comentario, DependenciaTarefa, Fase, ItemOrcamento, LancamentoOrcamento, MarcoLinhaTempo, PapelUsuario,
     Pilar, Projeto, ProjetoMembro, Tarefa,
 )
 from tests.conftest import SENHA
@@ -59,7 +59,15 @@ CORPOS = {  # corpos válidos: o 404 tem de vir da AUTORIZAÇÃO, não de um 422
     ("POST", "/projetos/{projeto_id}/orcamento/lancamentos"): lambda c: {
         "item_id": c["item_id"], "valor": "1.00", "data": "2026-01-01", "descricao": "invasão"},
     ("PATCH", "/projetos/{projeto_id}/orcamento/lancamentos/{lancamento_id}"): {"valor": "999999.00"},
+    ("POST", "/projetos/{projeto_id}/tarefas/{tarefa_id}/anexos"): {"__arquivo__": ("invasao.txt", b"invasao")},
 }
+
+
+def _pedir(client, metodo, url, corpo, headers):
+    """Corpo JSON, ou multipart quando a rota recebe arquivo."""
+    if isinstance(corpo, dict) and "__arquivo__" in corpo:
+        return client.request(metodo, url, files={"arquivo": corpo["__arquivo__"]}, headers=headers)
+    return client.request(metodo, url, json=corpo, headers=headers)
 
 
 @pytest.fixture
@@ -90,7 +98,9 @@ def cenario(client, criar_usuario, login) -> Dict:
     lanc = client.post(f"/projetos/{pid}/orcamento/lancamentos",
                        json={"item_id": item["id"], "valor": "80000.00", "data": "2026-02-01", "descricao": "Parcela 1"},
                        headers=h["dono"]).json()
-    return {"h": h, "ids": ids, "projeto_id": pid, "fase_id": fase_id, "tarefa_id": tarefa["id"],
+    anexo = client.post(f"/projetos/{pid}/tarefas/{tarefa['id']}/anexos", files={"arquivo": ("ata.pdf", b"%PDF sigiloso")},
+                        headers=h["dono"]).json()
+    return {"h": h, "ids": ids, "projeto_id": pid, "fase_id": fase_id, "tarefa_id": tarefa["id"], "anexo_id": anexo["id"],
             "comentario_id": comentario["id"], "pilar_id": projeto["pilares"][0]["id"],
             "fases": [f["id"] for f in projeto["fases"]], "tarefa2_id": tarefa2["id"], "dependencia_id": dep["id"],
             "marco_id": marco["id"], "item_id": item["id"], "lancamento_id": lanc["id"]}
@@ -100,7 +110,7 @@ def _url(caminho: str, c: Dict, projeto_id: int) -> str:
     valores = {"projeto_id": projeto_id, "fase_id": c["fase_id"], "tarefa_id": c["tarefa_id"],
                "comentario_id": c["comentario_id"], "usuario_id": c["ids"]["leitor"], "pilar_id": c["pilar_id"],
                "dependencia_id": c["dependencia_id"], "marco_id": c["marco_id"], "item_id": c["item_id"],
-               "lancamento_id": c["lancamento_id"]}
+               "lancamento_id": c["lancamento_id"], "anexo_id": c["anexo_id"]}
     return re.sub(r"\{(\w+)\}", lambda m: str(valores[m.group(1)]), caminho)
 
 
@@ -118,6 +128,7 @@ def _foto_do_banco(db) -> tuple:
         sorted((m.id, m.titulo, m.data) for m in db.scalars(select(MarcoLinhaTempo))),
         sorted((i.id, i.descricao, i.valor_orcado) for i in db.scalars(select(ItemOrcamento))),
         sorted((x.id, x.valor, x.descricao) for x in db.scalars(select(LancamentoOrcamento))),
+        sorted((a.id, a.nome_original, a.tarefa_id) for a in db.scalars(select(AnexoTarefa))),
     )
 
 
@@ -138,8 +149,7 @@ def test_inventario_cobre_as_rotas_de_projeto():
 def test_quem_nao_e_membro_recebe_404_e_nada_muda(client, cenario, db, metodo, caminho):
     c = cenario
     antes = _foto_do_banco(db)
-    r = client.request(metodo, _url(caminho, c, c["projeto_id"]), json=_corpo(metodo, caminho, c),
-                       headers=c["h"]["intruso"])
+    r = _pedir(client, metodo, _url(caminho, c, c["projeto_id"]), _corpo(metodo, caminho, c), c["h"]["intruso"])
     assert r.status_code == 404, f"{metodo} {caminho}: {r.status_code} {r.text[:200]}"
     assert r.json() == NAO_ENCONTRADO
     assert "Fusão" not in r.text and "80 mi" not in r.text
@@ -150,10 +160,8 @@ def test_quem_nao_e_membro_recebe_404_e_nada_muda(client, cenario, db, metodo, c
 def test_projeto_alheio_e_inexistente_sao_indistinguiveis(client, cenario, metodo, caminho):
     """Mesmo status e mesmo corpo: o intruso não consegue enumerar quais projetos existem."""
     c = cenario
-    alheio = client.request(metodo, _url(caminho, c, c["projeto_id"]), json=_corpo(metodo, caminho, c),
-                            headers=c["h"]["intruso"])
-    inexistente = client.request(metodo, _url(caminho, c, 999_999), json=_corpo(metodo, caminho, c),
-                                 headers=c["h"]["intruso"])
+    alheio = _pedir(client, metodo, _url(caminho, c, c["projeto_id"]), _corpo(metodo, caminho, c), c["h"]["intruso"])
+    inexistente = _pedir(client, metodo, _url(caminho, c, 999_999), _corpo(metodo, caminho, c), c["h"]["intruso"])
     assert (alheio.status_code, alheio.json()) == (inexistente.status_code, inexistente.json())
 
 
@@ -241,7 +249,7 @@ def test_visualizador_nao_altera_nada(client, cenario, db, metodo, caminho):
     c = cenario
     antes = _foto_do_banco(db)
     corpo = _corpo(metodo, caminho, c)
-    r = client.request(metodo, _url(caminho, c, c["projeto_id"]), json=corpo, headers=c["h"]["leitor"])
+    r = _pedir(client, metodo, _url(caminho, c, c["projeto_id"]), corpo, c["h"]["leitor"])
     assert r.status_code == 403, f"{metodo} {caminho}: {r.status_code} {r.text[:200]}"
     assert _foto_do_banco(db) == antes
 
@@ -276,8 +284,7 @@ def test_tentativas_ficam_sem_rastro_de_dados_mas_o_banco_nao_muda(client, cenar
     """Nenhuma tentativa negada vira registro de 'alteração' na auditoria do projeto."""
     c = cenario
     for metodo, caminho in _rotas_de_projeto():
-        client.request(metodo, _url(caminho, c, c["projeto_id"]), json=_corpo(metodo, caminho, c),
-                       headers=c["h"]["intruso"])
+        _pedir(client, metodo, _url(caminho, c, c["projeto_id"]), _corpo(metodo, caminho, c), c["h"]["intruso"])
     db.expire_all()
     autores = {a.usuario_id for a in db.scalars(select(Auditoria).where(Auditoria.projeto_id == c["projeto_id"]))}
     assert c["ids"]["intruso"] not in autores

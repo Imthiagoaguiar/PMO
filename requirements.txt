@@ -7,6 +7,7 @@ pydantic-settings>=2.2
 pandas>=2.1
 openpyxl>=3.1
 lxml>=5.3  # gravador de XML em C usado pelo openpyxl: exportação de planilha grande ~15% mais rápida
+python-pptx>=1.0  # apresentação do projeto em PowerPoint (gráficos nativos, editáveis)
 python-multipart>=0.0.31
 PyJWT[crypto]>=2.8
 argon2-cffi>=23.1

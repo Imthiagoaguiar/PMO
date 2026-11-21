@@ -68,7 +68,7 @@ function FormularioSenha({ aoCancelar }: { aoCancelar?: () => void }) {
             Cancelar
           </Button>
         )}
-        <Button type="submit" disabled={!valido || alterar.isPending}>
+        <Button carregando={alterar.isPending} type="submit" disabled={!valido || alterar.isPending}>
           {alterar.isPending ? "Alterando..." : "Alterar senha"}
         </Button>
       </div>
