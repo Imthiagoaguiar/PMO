@@ -150,6 +150,19 @@ cd frontend && npm run dev
 Depois de um `git pull`, rode também `pip install -r requirements-dev.lock` (API) e `npm install`
 (front), caso alguma dependência tenha mudado.
 
+### Ligar tudo sozinho no Mac (recomendado)
+
+Em vez de abrir um Terminal para cada parte, instale a API, o worker, o vigia e os lembretes como
+serviços do macOS: ligam sozinhos quando você entra no Mac e voltam sozinhos se caírem.
+
+```bash
+scripts/instalar-servicos.sh             # instala (rode de novo depois de atualizar o código)
+scripts/instalar-servicos.sh --status    # mostra se cada parte está rodando
+scripts/instalar-servicos.sh --remover   # desliga e remove
+```
+
+O site (front) continua com `cd frontend && npm run dev`. Registros em `logs/servico-*.log`.
+
 ### Lembretes de tarefas atrasadas
 
 Outro processo separado (como o vigia). Precisa de `RESEND_API_KEY`; sem domínio verificado no Resend,
