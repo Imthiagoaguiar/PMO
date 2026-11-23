@@ -122,3 +122,47 @@ def test_corta_mesmo_com_disco_folgado(tmp_path, monkeypatch):
 def test_servico_da_api_sem_log_de_acesso_duplicado():
     script = Path(__file__).resolve().parents[1] / "scripts" / "instalar-servicos.sh"
     assert "--port 8000 --no-access-log" in script.read_text()
+
+
+# ---------- Alarme falso da IA (22/11/2026: "disco reduzido" com 72,8 GB e 29,7% livres) ----------
+
+
+def _ia_responde(monkeypatch, achados):
+    import json
+
+    monkeypatch.setattr(settings, "groq_api_key", "gsk_teste")
+    enviado = {}
+
+    def _falso(conteudo):
+        enviado["conteudo"] = conteudo
+        return json.dumps({"resumo": "Sistema estável na última hora.", "achados": achados})
+
+    monkeypatch.setattr(analista, "_chamar", _falso)
+    return enviado
+
+
+def test_ia_recebe_os_limites_do_que_e_normal(monkeypatch):
+    enviado = _ia_responde(monkeypatch, [])
+    analista.analisar({"recursos": {"disco_livre_gb": 72.8, "disco_livre_percentual": 29.7}}, [])
+    assert "limites_do_que_e_normal" in enviado["conteudo"] and "abaixo de 10 GB" in enviado["conteudo"]
+    assert "NÃO crie achado" in analista.PROMPT
+
+
+def test_alarme_da_ia_que_contradiz_as_regras_e_descartado(monkeypatch):
+    _ia_responde(monkeypatch, [
+        {"titulo": "Espaço em disco reduzido", "gravidade": "media"},          # caso real de 22/11
+        {"titulo": "API indisponível (ConnectError)", "gravidade": "critica"},  # caso real de 21/11 (Mac ligando)
+        {"titulo": "Rota lenta: GET /projetos", "gravidade": "media"},
+        {"titulo": "Erro 500 em POST /projetos/importar", "gravidade": "alta"},  # tema que as regras não cobrem
+        {"titulo": "Backups apenas no mesmo disco", "gravidade": "baixa"},       # a regra de backup disparou
+    ])
+    resposta, situacao = analista.analisar({}, [{"codigo": "backup_so_local"}])
+    assert [a.titulo for a in resposta.achados] == ["Erro 500 em POST /projetos/importar", "Backups apenas no mesmo disco"]
+    assert "3 achado(s) da IA descartado(s)" in situacao
+
+
+def test_achado_da_ia_fica_quando_a_regra_tambem_viu(monkeypatch):
+    _ia_responde(monkeypatch, [{"titulo": "Disco quase cheio", "gravidade": "critica"},
+                               {"titulo": "API fora do ar há 20 minutos", "gravidade": "critica"}])
+    resposta, situacao = analista.analisar({}, [{"codigo": "disco_baixo"}, {"codigo": "api_fora_do_ar"}])
+    assert len(resposta.achados) == 2 and "descartado" not in situacao

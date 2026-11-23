@@ -372,7 +372,7 @@ def test_resposta_da_ia_com_acento_e_listas_longas_e_aproveitada(monkeypatch):
         ] + [{"titulo": f"Achado {i}", "gravidade": "baixa"} for i in range(20)],
     }, ensure_ascii=False)
     monkeypatch.setattr(analista, "_chamar", lambda c: bruto)
-    resposta, situacao = analista.analisar(_sinais_base(), [])
+    resposta, situacao = analista.analisar(_sinais_base(), [{"codigo": "disco_baixo"}, {"codigo": "backup_so_local"}])  # as regras de disco/backup dispararam
     assert resposta is not None and situacao.startswith("analisado por")
     assert [a.gravidade for a in resposta.achados[:2]] == ["critica", "media"]
     assert len(resposta.achados) == 15 and len(resposta.achados[0].evidencias) == 8
@@ -390,7 +390,7 @@ def test_achado_malformado_e_descartado_sozinho_e_o_log_so_diz_o_campo(monkeypat
         {"titulo": "Backup só local", "gravidade": "baixa"},
     ]}))
     with caplog.at_level("WARNING", logger="pmo.vigia"):
-        resposta, situacao = analista.analisar(_sinais_base(), [])
+        resposta, situacao = analista.analisar(_sinais_base(), [{"codigo": "disco_baixo"}, {"codigo": "backup_so_local"}])  # as regras de disco/backup dispararam
     assert situacao.startswith("analisado por")
     assert [a.titulo for a in resposta.achados] == ["Disco quase cheio", "Backup só local"]
     assert "2 achado(s) da IA fora do formato" in caplog.text
