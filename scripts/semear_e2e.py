@@ -24,7 +24,9 @@ with SessionLocal() as db:
     lia = Usuario(email="leitora@e2e.com", nome="Lia Leitora", senha_hash=hash_, papel=PapelUsuario.MEMBRO)
     # Só para o teste de "Esqueci minha senha" (ele troca a senha dela; os outros testes não a usam).
     rui = Usuario(email="esqueceu@e2e.com", nome="Rui Esquecido", senha_hash=hash_, papel=PapelUsuario.MEMBRO)
-    db.add_all([gil, eva, lia, rui])
+    # Admin só para a varredura das telas de administração (Usuários, Auditoria, Vigia).
+    ana = Usuario(email="admin@e2e.com", nome="Ana Admin", senha_hash=hash_, papel=PapelUsuario.ADMIN)
+    db.add_all([gil, eva, lia, rui, ana])
     db.flush()
     projeto = services.criar_projeto_com_fases(db, gil, "Implantação ERP")
     db.flush()

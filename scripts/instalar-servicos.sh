@@ -17,7 +17,9 @@ SERVICOS=(api trabalhador vigia lembretes)
 
 argumentos() {
   case "$1" in
-    api) echo "-m uvicorn app.main:app --host 127.0.0.1 --port 8000" ;;
+    # --no-access-log: cada requisição já vai para logs/pmo.log (com rotação); sem isto ela era gravada
+    # de novo em logs/servico-api.log, que cresce sem limite.
+    api) echo "-m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log" ;;
     trabalhador) echo "-m app.trabalhador" ;;
     vigia) echo "-m app.vigia" ;;
     lembretes) echo "-m app.lembretes" ;;
@@ -51,7 +53,7 @@ fi
 mkdir -p "$RAIZ/logs" "$RAIZ/anexos" "$PASTA"
 
 # Processos ligados à mão (Terminal, nohup) ocupariam a porta 8000 ou a trava do vigia: saem antes.
-for padrao in "uvicorn app.main:app --port 8000" "uvicorn app.main:app --host 127.0.0.1 --port 8000" \
+for padrao in "uvicorn app.main:app --port 8000" "uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log" \
               "-m app.trabalhador" "-m app.vigia" "-m app.lembretes"; do
   for pid in $(pgrep -f -- "$padrao" || true); do
     if ! launchctl list | awk '{print $1}' | grep -qx "$pid"; then kill -TERM "$pid" 2>/dev/null || true; fi

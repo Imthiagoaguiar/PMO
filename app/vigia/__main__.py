@@ -13,6 +13,7 @@ import logging
 import signal
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -21,11 +22,11 @@ from typing import Iterator, List, Optional
 from sqlalchemy import text
 from watchdog.observers import Observer
 
-from app import registro
+from app import registro, tempo
 from app.config import settings
 from app.database import SessionLocal, engine
 from app.security import agora_utc
-from app.vigia import rodada
+from app.vigia import rodada, sondas
 from app.vigia.coletor import ColetorDeLog
 
 logger = logging.getLogger("pmo.vigia")
@@ -54,6 +55,23 @@ def _coletores() -> List[ColetorDeLog]:
     if not settings.log_arquivo:
         logger.warning("Vigia: LOG_ARQUIVO não configurado; as rodadas não terão os sinais do log da API")
     return [ColetorDeLog(Path(a)) for a in arquivos]
+
+
+def esperar_api(parar: threading.Event, limite_s: float, passo_s: float = 3.0) -> bool:
+    """
+    Espera a API responder ao /saude (até `limite_s`). Ao ligar o Mac, os serviços sobem juntos e a
+    API leva alguns segundos: a primeira rodada não pode acusar "API fora do ar" por isso.
+    Passado o limite, segue mesmo assim (aí ela realmente não subiu, e a rodada deve dizer).
+    """
+    fim = time.monotonic() + limite_s
+    while not parar.is_set():
+        if sondas.saude_api(settings.vigia_api_url).get("ok"):
+            return True
+        if time.monotonic() >= fim:
+            logger.warning("Vigia: a API não respondeu em %s s; fazendo a primeira rodada assim mesmo", limite_s)
+            return False
+        parar.wait(passo_s)
+    return False
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -94,17 +112,19 @@ def main(argv: Optional[list] = None) -> int:
             signal.signal(sinal, lambda *_: parar.set())
         logger.info("Vigia ligado: uma rodada a cada %s min (Ctrl+C para parar)", settings.vigia_intervalo_minutos)
 
-        janela = inicio - intervalo
+        esperar_api(parar, settings.vigia_espera_api_segundos)
+        janela = [inicio - intervalo]
+
+        def _rodada(agora) -> None:
+            try:
+                with SessionLocal() as db:
+                    rodada.executar(db, coletores, janela_inicio=janela[0], agora=agora)
+            except Exception:  # banco fora do ar etc.: tenta de novo na próxima vez
+                logger.exception("Vigia: a rodada falhou")
+            janela[0] = agora
+
         try:
-            while not parar.is_set():
-                agora = agora_utc()
-                try:
-                    with SessionLocal() as db:
-                        rodada.executar(db, coletores, janela_inicio=janela, agora=agora)
-                except Exception:  # banco fora do ar etc.: tenta de novo na próxima hora
-                    logger.exception("Vigia: a rodada falhou")
-                janela = agora
-                parar.wait(intervalo.total_seconds())
+            tempo.repetir_pelo_relogio(parar, intervalo, _rodada)
         finally:
             if observador:
                 observador.stop()

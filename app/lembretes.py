@@ -130,12 +130,13 @@ def main(argv: Optional[list] = None) -> int:
     for sinal in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sinal, lambda *_: parar.set())
     logger.info("Lembretes ligados: conferindo a cada %s min", settings.lembretes_verificar_minutos)
-    while not parar.is_set():
+    def _conferir(agora: datetime) -> None:
         try:
-            executar()
+            executar(agora)
         except Exception:
             logger.exception("Lembretes: falha na conferência (tenta de novo na próxima)")
-        parar.wait(settings.lembretes_verificar_minutos * 60)
+
+    tempo.repetir_pelo_relogio(parar, timedelta(minutes=settings.lembretes_verificar_minutos), _conferir)
     logger.info("Lembretes desligados")
     return 0
 

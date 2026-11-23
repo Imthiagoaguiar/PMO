@@ -123,6 +123,30 @@ def anexos_orfaos(db: Session, resultado: Resultado, simular: bool) -> None:
     resultado.itens.append(f"{len(sobras)} anexo(s) órfão(s) ({tamanho / 1e6:.0f} MB)")
 
 
+def aparar_logs_de_servico(resultado: Resultado, simular: bool, pasta: Path = Path("logs"),
+                           maximo_mb: Optional[int] = None, manter_mb: int = 1) -> None:
+    """
+    logs/servico-*.log (a saída dos serviços do launchd, scripts/instalar-servicos.sh) não têm rotação:
+    acima de LIMPEZA_SERVICO_LOG_MAX_MB, ficam só com o último `manter_mb` (a partir de uma linha inteira).
+    O launchd grava em modo "acrescentar", então cortar o arquivo com o serviço rodando é seguro.
+    """
+    limite = (maximo_mb or settings.limpeza_servico_log_max_mb) * 1024 * 1024
+    manter = manter_mb * 1024 * 1024
+    for arquivo in sorted(pasta.glob("servico-*.log")):
+        tamanho = arquivo.stat().st_size
+        if tamanho <= limite:
+            continue
+        if not simular:
+            with open(arquivo, "rb") as origem:
+                origem.seek(-manter, 2)
+                final = origem.read()
+            final = final[final.find(b"\n") + 1:]
+            with open(arquivo, "r+b") as destino:
+                destino.write(b"[... inicio cortado pela limpeza automatica ...]\n" + final)
+                destino.truncate()
+        resultado.itens.append(f"{arquivo.name} cortado ({tamanho / 1e6:.0f} MB -> {manter_mb} MB)")
+
+
 def caches_de_desenvolvimento(resultado: Resultado, simular: bool,
                               executar: Callable[..., object] = subprocess.run) -> None:
     for nome, pasta in CACHES_PERMITIDOS.items():
@@ -166,6 +190,11 @@ def avisar_no_mac(titulo: str, texto: str, executar: Callable[..., object] = sub
 
 
 def executar(agora: bool = False, simular: bool = False, caches: bool = False) -> Optional[Resultado]:
+    # Sempre (é barato e evita que um log sem rotação encha o disco aos poucos), mesmo com espaço sobrando.
+    aparados = Resultado()
+    aparar_logs_de_servico(aparados, simular)
+    if aparados.itens:
+        logger.info("Limpeza: %s", "; ".join(aparados.itens), extra={"tipo": "limpeza", "itens": aparados.itens})
     antes = livre_gb()
     if not agora and antes >= settings.limpeza_min_gb:
         logger.info("Limpeza: %s GB livres (mínimo %s GB): nada a fazer", antes, settings.limpeza_min_gb)

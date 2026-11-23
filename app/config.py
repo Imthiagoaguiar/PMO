@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # ---------- Limpeza do disco (python -m app.limpeza) ----------
     # Abaixo deste espaço livre, a limpeza apaga o que é recriável (logs antigos, caches, registros velhos).
     limpeza_min_gb: float = Field(10, ge=1, le=10_000)
+    limpeza_servico_log_max_mb: int = Field(10, ge=1, le=1000)  # logs/servico-*.log acima disto são cortados
     limpeza_retencao_dias: int = Field(90, ge=7, le=3650)
     log_arquivo_limpeza: Optional[str] = "logs/limpeza.log"
 
@@ -55,6 +56,9 @@ class Settings(BaseSettings):
     vigia_emails: List[str] = []
     vigia_intervalo_minutos: int = Field(60, ge=5, le=24 * 60)
     vigia_api_url: str = "http://localhost:8000"  # para a sonda de saúde
+    # Ao ligar (ex.: o Mac acabou de iniciar e a API ainda está subindo), espera a API responder antes da
+    # 1ª rodada: sem isso, toda inicialização virava um "API fora do ar" crítico e falso.
+    vigia_espera_api_segundos: int = Field(120, ge=0, le=900)
     database_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/pmo"
     # Conexões por processo da API (WEB_CONCURRENCY processos): fixas + extras. Some tudo e deixe folga
     # para o worker, o vigia e o backup dentro do max_connections do Postgres (padrão 100).
