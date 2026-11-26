@@ -124,6 +124,8 @@ def orfaos(chaves_no_banco: Set[str], idade_minima_s: int = 3600) -> List[Path]:
     limite = time.time() - idade_minima_s
     achados = []
     for arquivo in base.glob("*/*"):
+        if not arquivo.parent.name.isdigit():  # só as pastas de projeto (a de modelos de slides é outra coisa)
+            continue
         chave = arquivo.name.removesuffix(".parcial")
         if arquivo.is_file() and chave not in chaves_no_banco and arquivo.stat().st_mtime < limite:
             achados.append(arquivo)

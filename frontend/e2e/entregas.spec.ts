@@ -50,8 +50,9 @@ test("botões de andamento, anexos, gargalos, arquivos e apresentação em Power
   if (FOTOS) await page.screenshot({ path: `${FOTOS}/gargalos.png`, fullPage: true })
 
   // ---------- PowerPoint ----------
-  const pptx = page.waitForEvent("download")
   await page.getByRole("button", { name: "PowerPoint" }).click()
+  const pptx = page.waitForEvent("download")
+  await page.getByRole("button", { name: "Gerar PowerPoint" }).click()
   expect((await pptx).suggestedFilename()).toMatch(/^Apresentação - Implantação ERP\.pptx$/)
   await expect(aviso(page, "Apresentação baixada")).toBeVisible()
 

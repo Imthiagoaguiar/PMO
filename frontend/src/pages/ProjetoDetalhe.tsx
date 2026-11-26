@@ -8,10 +8,13 @@ import { BarraProgresso, Campo, Carregando, ErroCarregar, StatusBadge } from "@/
 import { HistoricoDeArquivos } from "@/components/projeto/Anexos"
 import { Comentarios } from "@/components/projeto/Comentarios"
 import { Cronograma } from "@/components/projeto/Cronograma"
+import { CurvaS } from "@/components/projeto/CurvaS"
+import { Feedback } from "@/components/projeto/Feedback"
 import { Gargalos } from "@/components/projeto/Gargalos"
 import { Historico } from "@/components/projeto/Historico"
 import { LinhaDoTempo } from "@/components/projeto/LinhaDoTempo"
 import { Membros } from "@/components/projeto/Membros"
+import { MontadorSlides } from "@/components/projeto/MontadorSlides"
 import { Orcamento } from "@/components/projeto/Orcamento"
 import { Pilares } from "@/components/projeto/Pilares"
 import {
@@ -134,7 +137,7 @@ export function ProjetoDetalhe() {
   const [excluindo, setExcluindo] = useState(false)
   const [exportando, setExportando] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
-  const [gerandoPptx, setGerandoPptx] = useState(false)
+  const [montandoSlides, setMontandoSlides] = useState(false)
 
   const mudarStatus = useMutation({
     mutationFn: (status: StatusProjeto) =>
@@ -169,18 +172,6 @@ export function ProjetoDetalhe() {
       fmt.notificarErro(erro)
     } finally {
       setGerandoPdf(false)
-    }
-  }
-
-  async function gerarApresentacao() {
-    setGerandoPptx(true)
-    try {
-      await baixarArquivo(`/projetos/${id}/apresentacao`, "apresentacao.pptx")
-      toast.success("Apresentação baixada: abra no PowerPoint (os gráficos são editáveis).")
-    } catch (erro) {
-      fmt.notificarErro(erro)
-    } finally {
-      setGerandoPptx(false)
     }
   }
 
@@ -247,8 +238,8 @@ export function ProjetoDetalhe() {
           <Button carregando={gerandoPdf} variant="outline" onClick={gerarPdf} disabled={gerandoPdf}>
             <FileText /> {gerandoPdf ? "Gerando PDF..." : "Relatório PDF"}
           </Button>
-          <Button carregando={gerandoPptx} variant="outline" onClick={gerarApresentacao}>
-            <Presentation /> {gerandoPptx ? "Gerando slides..." : "PowerPoint"}
+          <Button variant="outline" onClick={() => setMontandoSlides(true)}>
+            <Presentation /> PowerPoint
           </Button>
           <Button carregando={exportando} variant="outline" onClick={exportar} disabled={exportando}>
             <Download /> {exportando ? "Exportando..." : "Exportar Excel"}
@@ -325,7 +316,9 @@ export function ProjetoDetalhe() {
           <TabsTrigger value="pilares">Pilares</TabsTrigger>
           <TabsTrigger value="orcamento">Orçamento</TabsTrigger>
           <TabsTrigger value="linha">Linha do tempo</TabsTrigger>
+          <TabsTrigger value="curva-s">Curva S</TabsTrigger>
           <TabsTrigger value="gargalos">Gargalos</TabsTrigger>
+          {permissoes.gerenciar && <TabsTrigger value="feedback">Feedback</TabsTrigger>}
           <TabsTrigger value="comentarios">Comentários</TabsTrigger>
           <TabsTrigger value="arquivos">Arquivos</TabsTrigger>
           <TabsTrigger value="membros">Membros</TabsTrigger>
@@ -343,6 +336,14 @@ export function ProjetoDetalhe() {
         <TabsContent value="linha">
           <LinhaDoTempo projeto={p} podeEditar={podeEditarCronograma} />
         </TabsContent>
+        <TabsContent value="curva-s">
+          <CurvaS projetoId={p.id} />
+        </TabsContent>
+        {permissoes.gerenciar && (
+          <TabsContent value="feedback">
+            <Feedback projetoId={p.id} />
+          </TabsContent>
+        )}
         <TabsContent value="gargalos">
           <Gargalos projetoId={p.id} />
         </TabsContent>
@@ -361,6 +362,7 @@ export function ProjetoDetalhe() {
       </Tabs>
 
       {editando && <EditarProjeto projeto={p} aoFechar={() => setEditando(false)} />}
+      {montandoSlides && <MontadorSlides projeto={p} aoFechar={() => setMontandoSlides(false)} />}
 
       <AlertDialog open={excluindo} onOpenChange={setExcluindo}>
         <AlertDialogContent>

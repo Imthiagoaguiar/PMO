@@ -609,6 +609,108 @@ class Gargalos(BaseModel):
     piores: List[TarefaGargalo] = Field(..., description="As 10 tarefas com mais dias de atraso")
 
 
+# ---------- Curva S ----------
+
+
+class PontoCurvaS(BaseModel):
+    data: date
+    planejado_pct: float = Field(..., description="% do cronograma que deveria estar feito (ponderado pela duração)")
+    realizado_pct: Optional[float] = Field(None, description="% feito de fato naquele dia (nulo no futuro)")
+    planejado_rs: Optional[Decimal] = Field(None, description="Orçado distribuído pela curva física planejada")
+    realizado_rs: Optional[Decimal] = Field(None, description="Lançamentos acumulados até a data")
+
+
+class CurvaS(BaseModel):
+    pontos: List[PontoCurvaS]
+    tarefas_sem_datas: int = Field(..., description="Fora da curva: sem início ou término")
+    com_orcamento: bool
+    planejado_hoje: Optional[float] = None
+    realizado_hoje: Optional[float] = None
+    desvio_pp: Optional[float] = Field(None, description="Realizado - planejado hoje, em pontos percentuais")
+    idp: Optional[float] = Field(None, description="Índice de desempenho de prazo: realizado / planejado (< 1 = atrasado)")
+    planejado_rs_hoje: Optional[Decimal] = None
+    realizado_rs_hoje: Optional[Decimal] = None
+
+
+# ---------- Feedback de áreas e pessoas ----------
+
+
+class NumerosFeedback(BaseModel):
+    tarefas: int
+    entregues: int
+    no_prazo: int
+    antecipadas: int
+    entregues_atrasadas: int
+    atraso_medio: Optional[float] = Field(None, description="Dias, entre as entregues com atraso")
+    pontualidade: Optional[int] = Field(None, description="% das entregues que saíram no prazo")
+    abertas: int
+    abertas_vencidas: int
+    maior_atraso_aberto: int = Field(..., description="Dias da tarefa em aberto mais atrasada")
+    reaberturas: int = Field(..., description="Vezes que uma tarefa saiu de 100% (retrabalho)")
+    sem_prazo: int
+
+
+class FeedbackEntidade(BaseModel):
+    chave: str = Field(..., description="Para pedir o texto da IA")
+    nome: str
+    numeros: NumerosFeedback
+    pontos_fortes: List[str]
+    pontos_a_melhorar: List[str]
+    observacao: Optional[str] = None
+
+
+class Feedback(BaseModel):
+    """Visível só para o dono do projeto e administradores."""
+
+    pessoas: List[FeedbackEntidade]
+    areas: List[FeedbackEntidade]
+    pontualidade_projeto: Optional[int] = None
+    atraso_medio_projeto: Optional[float] = None
+
+
+class PedidoTextoFeedback(BaseModel):
+    tipo: Literal["pessoa", "area"]
+    chave: str = Field(..., min_length=1, max_length=200)
+
+
+class TextoFeedback(BaseModel):
+    texto: str
+    modelo: str
+
+
+# ---------- Montador de slides ----------
+
+TipoSlide = Literal["capa", "resumo", "curva_s", "linha_do_tempo", "marcos", "pilares", "orcamento", "gargalos",
+                    "atencao", "texto"]
+
+
+class SlidePedido(BaseModel):
+    tipo: TipoSlide
+    titulo: Optional[str] = Field(None, max_length=120, description="Vazio = o título padrão do slide")
+    texto: Optional[str] = Field(None, max_length=3000, description="Só no slide de texto: um tópico por linha")
+    notas: Optional[str] = Field(None, max_length=3000, description="Notas do apresentador")
+
+    @field_validator("titulo", "texto", "notas", mode="before")
+    @classmethod
+    def _limpar(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+
+class PedidoApresentacao(BaseModel):
+    modelo_id: Optional[IdBanco] = Field(None, description="Modelo da empresa; vazio = visual padrão do PMO")
+    slides: List[SlidePedido] = Field(..., min_length=1, max_length=40)
+
+
+class ModeloApresentacaoRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    nome: str
+    tamanho: int
+    enviado_por: Optional["UsuarioResumo"] = None
+    enviado_em: InstanteUTC
+
+
 class MinhaTarefa(TarefaRead):
     projeto_id: int
     nome_projeto: str
@@ -1088,3 +1190,4 @@ class VigiaSituacao(BaseModel):
 # Referências a classes definidas mais abaixo no arquivo.
 LancamentoRead.model_rebuild()
 AnexoRead.model_rebuild()
+ModeloApresentacaoRead.model_rebuild()

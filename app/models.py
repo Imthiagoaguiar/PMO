@@ -584,6 +584,21 @@ class AnexoTarefa(Base):
     __table_args__ = (CheckConstraint("tamanho > 0", name="ck_anexo_tamanho_positivo"),)
 
 
+class ModeloApresentacao(Base):
+    """Modelo .pptx/.potx da empresa (cores, fontes, logotipo): o admin envia, todos usam no montador de slides."""
+
+    __tablename__ = "modelos_apresentacao"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nome: Mapped[str] = mapped_column(String(100), nullable=False)
+    chave: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)  # nome do arquivo no disco
+    tamanho: Mapped[int] = mapped_column(Integer, nullable=False)
+    enviado_por_id: Mapped[Optional[int]] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"))
+    enviado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    enviado_por: Mapped[Optional["Usuario"]] = relationship()
+
+
 # ---------- Colaboração ----------
 
 

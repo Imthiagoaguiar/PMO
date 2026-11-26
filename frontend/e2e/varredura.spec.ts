@@ -7,7 +7,7 @@ import { abrirProjeto, EDITORA, entrar, GERENTE, LEITORA } from "./apoio"
  * qualquer erro de JavaScript, erro no console ou resposta 5xx da API (4xx inesperados vão listados).
  */
 const ADMIN = "admin@e2e.com"
-const ABAS = ["Cronograma", "Pilares", "Orçamento", "Linha do tempo", "Gargalos", "Comentários", "Arquivos", "Membros", "Histórico"]
+const ABAS = ["Cronograma", "Pilares", "Orçamento", "Linha do tempo", "Curva S", "Gargalos", "Comentários", "Arquivos", "Membros", "Histórico"]
 
 function vigiar(page: Page) {
   const problemas: string[] = []
@@ -33,13 +33,22 @@ async function abrirEFechar(page: Page, botao: RegExp | string) {
   await expect(page.getByRole("dialog")).toBeHidden()
 }
 
-async function percorrerProjeto(page: Page, podeEditar: boolean) {
+async function percorrerProjeto(page: Page, podeEditar: boolean, dono: boolean) {
   await abrirProjeto(page)
   for (const aba of ABAS) {
     await page.getByRole("tab", { name: aba, exact: true }).click()
     await expect(page.getByRole("tabpanel")).toBeVisible()
     await page.waitForLoadState("networkidle")
   }
+  // Feedback de pessoas: só o dono do projeto e administradores veem a aba.
+  const feedback = page.getByRole("tab", { name: "Feedback", exact: true })
+  if (dono) {
+    await feedback.click()
+    await expect(page.getByText("Visível só para o dono do projeto e administradores.")).toBeVisible()
+  } else {
+    await expect(feedback).toHaveCount(0)
+  }
+  await abrirEFechar(page, "PowerPoint")
   if (!podeEditar) return
   await page.getByRole("tab", { name: "Cronograma", exact: true }).click()
   await abrirEFechar(page, "Nova tarefa em Iniciação")
@@ -60,7 +69,7 @@ for (const [quem, email, editar] of [["gerente", GERENTE, true], ["editora", EDI
   test(`varredura: ${quem}`, async ({ page }) => {
     const problemas = vigiar(page)
     await entrar(page, email)
-    await percorrerProjeto(page, editar)
+    await percorrerProjeto(page, editar, quem === "gerente" || quem === "admin")
     await page.goto("/minhas-tarefas")
     await expect(page.getByRole("heading", { name: "Minhas tarefas" })).toBeVisible()
     if (quem === "admin") {

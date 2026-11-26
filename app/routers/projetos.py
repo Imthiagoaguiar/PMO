@@ -13,7 +13,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from app import anexos, apresentacao, auditoria, fila, gargalos, idempotencia, orcamento, relatorio, services, tempo
+from app import anexos, apresentacao, auditoria, curva_s, feedback, fila, gargalos, modelos_pptx, idempotencia, orcamento, relatorio, services, tempo
 from app.config import settings
 from app.routers.importacoes import ler_importacao
 from app.database import get_db
@@ -39,6 +39,7 @@ from app.deps import (
 from app.models import (
     AnexoTarefa,
     Auditoria,
+    ModeloApresentacao,
     Comentario,
     Fase,
     Importacao,
@@ -52,8 +53,13 @@ from app.models import (
 )
 from app.rate_limit import limite_ia, limite_importacao, limite_relatorio
 from app.schemas import (
+    CurvaS,
+    Feedback,
     Gargalos,
     MembroAlterar,
+    PedidoApresentacao,
+    PedidoTextoFeedback,
+    TextoFeedback,
     MembroRead,
     PermissoesProjeto,
     ProjetoIAEntrada,
@@ -353,6 +359,53 @@ def indicadores_projeto(
     return services.calcular_indicadores(db, projeto)
 
 
+@router.get("/{projeto_id}/curva-s", response_model=CurvaS)
+def curva_s_projeto(
+    projeto_id: IdPath,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+) -> CurvaS:
+    """Planejado x realizado ao longo do tempo: físico (% do cronograma) e financeiro (R$)."""
+    projeto = obter_projeto_visivel(db, projeto_id, usuario)
+    return curva_s.calcular(db, projeto, tempo.hoje())
+
+
+@router.get("/{projeto_id}/feedback", response_model=Feedback)
+def feedback_projeto(
+    projeto_id: IdPath,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+) -> Feedback:
+    """Pontos fortes e a melhorar de cada pessoa e área. Só o dono do projeto e administradores (403 para os demais)."""
+    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario)
+    return feedback.calcular(db, projeto, tempo.hoje())
+
+
+@router.post("/{projeto_id}/feedback/ia", response_model=TextoFeedback)
+def feedback_texto_ia(
+    projeto_id: IdPath,
+    payload: PedidoTextoFeedback,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+) -> TextoFeedback:
+    """Texto de feedback escrito pela IA a partir dos números (a pessoa vai anônima para a IA). Nada é gravado."""
+    projeto = obter_projeto_gerenciavel(db, projeto_id, usuario)
+    limite_ia.por_usuario(usuario.id)
+    dados = feedback.calcular(db, projeto, tempo.hoje())
+    lista = dados.pessoas if payload.tipo == "pessoa" else dados.areas
+    entidade = next((e for e in lista if e.chave == payload.chave), None)
+    if entidade is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pessoa ou área não encontrada neste projeto.")
+    try:
+        texto = feedback.texto_por_ia(entidade, payload.tipo)
+    except ia.FalhaIA as exc:
+        raise HTTPException(status_code=exc.status_http, detail=exc.mensagem)
+    auditoria.registrar(db, "feedback.texto_ia", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id,
+                        detalhes={"tipo": payload.tipo, "nome": entidade.nome})
+    salvar(db)
+    return TextoFeedback(texto=texto, modelo=settings.groq_modelo)
+
+
 @router.get("/{projeto_id}/gargalos", response_model=Gargalos)
 def gargalos_projeto(
     projeto_id: IdPath,
@@ -439,22 +492,17 @@ def relatorio_pdf(
 MIME_PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
-@router.get(
-    "/{projeto_id}/apresentacao",
-    response_class=Response,
-    responses={200: {"content": {MIME_PPTX: {}}, "description": "Apresentação do projeto em PowerPoint"}},
-)
-def apresentacao_pptx(
-    projeto_id: IdPath,
-    db: Session = Depends(get_db),
-    usuario: Usuario = Depends(get_usuario_atual),
-) -> Response:
-    """
-    Slides 16:9 para apresentar o projeto: resumo, linha do tempo com marcos e bandeiras, pilares,
-    orçamento, gargalos e pontos de atenção. Gráficos nativos (editáveis no PowerPoint).
-    """
+def _apresentacao(db: Session, projeto_id: int, usuario: Usuario, slides: Optional[list] = None,
+                  modelo_id: Optional[int] = None) -> Response:
     limite_relatorio.por_usuario(usuario.id)
     projeto = obter_projeto_visivel(db, projeto_id, usuario)
+    modelo = None
+    if modelo_id is not None:
+        registro_modelo = db.get(ModeloApresentacao, modelo_id)
+        arquivo = modelos_pptx.caminho(registro_modelo.chave) if registro_modelo else None
+        if arquivo is None or not arquivo.is_file():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Modelo de apresentação não encontrado.")
+        modelo = arquivo.read_bytes()
     hoje = tempo.hoje()
     indicadores = services.calcular_indicadores(db, projeto, hoje)
     pct = {f.fase_id: f.percentual_conclusao for f in indicadores.fases}
@@ -471,19 +519,56 @@ def apresentacao_pptx(
             .order_by(Tarefa.data_fim, Tarefa.id).limit(10)
         )
     ]
+    tipos = {s_.tipo for s_ in slides} if slides is not None else set(apresentacao.PADRAO)
     conteudo = apresentacao.gerar_pptx(apresentacao.DadosApresentacao(
         projeto=projeto, dono=projeto.dono.nome, indicadores=indicadores,
         pilares=services.calcular_pilares(db, projeto, services.listar_pilares(db, projeto.id), hoje),
         orcamento=orcamento.resumo(db, projeto, hoje), gargalos=gargalos.calcular(db, projeto, hoje),
         marcos=list(projeto.marcos), fases=fases, atrasadas=atrasadas,
         gerado_por=usuario.nome, agora_utc=tempo.agora_utc(), hoje=hoje,
-    ))
-    auditoria.registrar(db, "projeto.apresentacao", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id)
+        curva=curva_s.calcular(db, projeto, hoje) if "curva_s" in tipos else None,
+    ), slides=slides, modelo=modelo)
+    auditoria.registrar(db, "projeto.apresentacao", "projeto", projeto.id, usuario=usuario, projeto_id=projeto.id,
+                        detalhes={"slides": len(slides) if slides is not None else len(apresentacao.PADRAO),
+                                  "modelo": modelo_id})
     salvar(db)
     return Response(
         content=conteudo, media_type=MIME_PPTX,
         headers={"Content-Disposition": content_disposition(f"Apresentação - {projeto.nome_projeto}.pptx")},
     )
+
+
+@router.get(
+    "/{projeto_id}/apresentacao",
+    response_class=Response,
+    responses={200: {"content": {MIME_PPTX: {}}, "description": "Apresentação padrão do projeto em PowerPoint"}},
+)
+def apresentacao_pptx(
+    projeto_id: IdPath,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+) -> Response:
+    """Todos os slides padrão no visual do PMO. Para escolher, ordenar, editar ou usar o modelo da empresa: POST."""
+    return _apresentacao(db, projeto_id, usuario)
+
+
+@router.post(
+    "/{projeto_id}/apresentacao",
+    response_class=Response,
+    responses={200: {"content": {MIME_PPTX: {}}, "description": "Apresentação montada em PowerPoint"}},
+)
+def montar_apresentacao(
+    projeto_id: IdPath,
+    payload: PedidoApresentacao,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_usuario_atual),
+) -> Response:
+    """
+    Montador: os slides na ordem pedida, cada um com título e notas opcionais (e slides de texto livres),
+    no visual do PMO ou no modelo da empresa (`modelo_id`). Gráficos nativos, editáveis no PowerPoint.
+    """
+    pedidos = [apresentacao.SlidePedido(**sl.model_dump()) for sl in payload.slides]
+    return _apresentacao(db, projeto_id, usuario, pedidos, payload.modelo_id)
 
 
 @router.get("/{projeto_id}/historico", response_model=Pagina[AuditoriaRead])

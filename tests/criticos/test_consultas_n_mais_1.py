@@ -28,7 +28,8 @@ TETO_POR_ROTA = {
     "/projetos/{id}/relatorio": 24,
     "/projetos/{id}/orcamento": 12,
     # a apresentação junta indicadores, pilares, orçamento, gargalos, marcos e atrasadas
-    "/projetos/{id}/apresentacao": 26,  # itens, lançamentos por item e por dia, indicadores do cronograma
+    "/projetos/{id}/apresentacao": 30,  # + Curva S
+    "/projetos/{id}/curva-s": 10,  # tarefas, sem datas, orçado, histórico (2), lançamentos: fixas  # itens, lançamentos por item e por dia, indicadores do cronograma
 }
 
 
@@ -98,6 +99,8 @@ ROTAS = [
     "/projetos/{id}/orcamento/lancamentos?limite=100",
     "/projetos/{id}/orcamento/exportar",
     "/projetos/{id}/gargalos",
+    "/projetos/{id}/curva-s",
+    "/projetos/{id}/feedback",
     "/projetos/{id}/anexos?limite=100",
     "/projetos/{id}/apresentacao",
     "/projetos/{id}/membros",

@@ -177,8 +177,8 @@ function nomeDoArquivo(disposicao: string): string | undefined {
 }
 
 /** Baixa um arquivo autenticado (ex.: exportação .xlsx) e dispara o download no navegador. */
-export async function baixarArquivo(caminho: string, nomePadrao: string): Promise<void> {
-  const resposta = await executar(caminho)
+export async function baixarArquivo(caminho: string, nomePadrao: string, opcoes?: Opcoes): Promise<void> {
+  const resposta = await executar(caminho, opcoes)
   const disposicao = resposta.headers.get("Content-Disposition") ?? ""
   const nome = nomeDoArquivo(disposicao) ?? nomePadrao
   const url = URL.createObjectURL(await resposta.blob())

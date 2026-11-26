@@ -11,10 +11,11 @@ Texto digitado pelas pessoas passa por `_limpo`: caractere de controle quebraria
 
 import io
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 from pptx import Presentation
@@ -26,9 +27,10 @@ from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
+from app import modelos_pptx
 from app.config import settings
 from app.models import CorMarco, FarolPilar, FormaMarco, MarcoLinhaTempo, Projeto
-from app.schemas import Gargalos, PilarRead, ProjetoIndicadores, ResumoOrcamento
+from app.schemas import CurvaS, Gargalos, PilarRead, ProjetoIndicadores, ResumoOrcamento
 
 AZUL = RGBColor(0x1D, 0x4E, 0xD8)
 TEXTO = RGBColor(0x1E, 0x29, 0x3B)
@@ -76,6 +78,7 @@ class DadosApresentacao:
     agora_utc: datetime
     hoje: date
     avisos: List[str] = field(default_factory=list)
+    curva: Optional[CurvaS] = None
 
 
 def _limpo(texto: Any, maximo: int = 200) -> str:
@@ -125,15 +128,6 @@ def _linha(slide: Any, x1: int, y1: int, x2: int, y2: int, cor: RGBColor, largur
     c.line.width = Pt(largura)
     if tracejada:
         c.line.dash_style = MSO_LINE_DASH_STYLE.DASH
-
-
-def _slide(prs: Any, titulo: str, d: DadosApresentacao) -> Any:
-    s = prs.slides.add_slide(prs.slide_layouts[6])
-    _retangulo(s, 0, 0, LARGURA, Inches(0.08), AZUL)
-    _texto(s, MARGEM, Inches(0.3), LARGURA - 2 * MARGEM, Inches(0.7), titulo, 26, True)
-    _texto(s, MARGEM, ALTURA - Inches(0.45), LARGURA - 2 * MARGEM, Inches(0.3),
-           f"{_limpo(d.projeto.nome_projeto, 80)} · PMO", 9, cor=FRACO)
-    return s
 
 
 def _tabela(slide: Any, x: int, y: int, w: int, linhas: List[List[str]], larguras: Sequence[float],
@@ -186,10 +180,11 @@ def _grafico_barras(slide: Any, x: int, y: int, w: int, h: int, categorias: List
         grafico.legend.position = XL_LEGEND_POSITION.TOP
         grafico.legend.include_in_layout = False
         grafico.legend.font.size = Pt(11)
-    for i, (_, _, cor) in enumerate(series):
-        serie = grafico.plots[0].series[i]
-        serie.format.fill.solid()
-        serie.format.fill.fore_color.rgb = cor
+    if _CORES_PROPRIAS.get():  # com o modelo da empresa, as cores das séries vêm do tema dele
+        for i, (_, _, cor) in enumerate(series):
+            serie = grafico.plots[0].series[i]
+            serie.format.fill.solid()
+            serie.format.fill.fore_color.rgb = cor
     grafico.plots[0].gap_width = 60
     eixo = grafico.value_axis
     eixo.has_major_gridlines = True
@@ -205,21 +200,25 @@ def _grafico_barras(slide: Any, x: int, y: int, w: int, h: int, categorias: List
 # ---------- Slides ----------
 
 
-def _capa(prs: Any, d: DadosApresentacao) -> None:
-    s = prs.slides.add_slide(prs.slide_layouts[6])
-    _retangulo(s, 0, 0, Inches(0.35), ALTURA, AZUL)
-    _texto(s, Inches(1.2), Inches(2.2), Inches(11), Inches(1.4), _limpo(d.projeto.nome_projeto, 120), 40, True)
+def _capa(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Any:
     ind = d.indicadores
     periodo = f"{_data(d.projeto.data_inicio or ind.data_inicio_prevista)} a {_data(ind.data_fim_prevista)}"
-    _texto(s, Inches(1.2), Inches(3.6), Inches(11), Inches(1.2),
-           f"Status: {d.projeto.status.value}  ·  {periodo}\nResponsável: {_limpo(d.dono, 80)}", 18, cor=FRACO)
     local = d.agora_utc.astimezone(ZoneInfo(settings.fuso_horario))
-    _texto(s, Inches(1.2), ALTURA - Inches(1.1), Inches(11), Inches(0.5),
-           f"Gerado em {local:%d/%m/%Y %H:%M} por {_limpo(d.gerado_por, 80)}", 12, cor=FRACO)
+    nome = titulo or _limpo(d.projeto.nome_projeto, 120)
+    linhas = [f"Status: {d.projeto.status.value}  ·  {periodo}", f"Responsável: {_limpo(d.dono, 80)}",
+              f"Gerado em {local:%d/%m/%Y %H:%M} por {_limpo(d.gerado_por, 80)}"]
+    if m.com_modelo:
+        return m.capa_do_modelo(nome, linhas)
+    s = m.prs.slides.add_slide(m.prs.slide_layouts[6])
+    _retangulo(s, 0, 0, Inches(0.35), ALTURA, AZUL)
+    _texto(s, Inches(1.2), Inches(2.2), Inches(11), Inches(1.4), nome, 40, True)
+    _texto(s, Inches(1.2), Inches(3.6), Inches(11), Inches(1.2), "\n".join(linhas[:2]), 18, cor=FRACO)
+    _texto(s, Inches(1.2), ALTURA - Inches(1.1), Inches(11), Inches(0.5), linhas[2], 12, cor=FRACO)
+    return s
 
 
-def _resumo(prs: Any, d: DadosApresentacao) -> None:
-    s = _slide(prs, "Resumo", d)
+def _resumo(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Optional[Any]:
+    s = m.novo(titulo or "Resumo")
     ind = d.indicadores
     largura = (LARGURA - 2 * MARGEM - Inches(0.6)) // 4
     cartoes = [
@@ -235,14 +234,15 @@ def _resumo(prs: Any, d: DadosApresentacao) -> None:
         _grafico_barras(s, MARGEM, Inches(3.05), LARGURA - 2 * MARGEM, Inches(3.8),
                         [_limpo(f.titulo, 40) for f in ind.fases],
                         [("% concluído", [round(f.percentual_conclusao, 1) for f in ind.fases], SERIE_REALIZADO)])
+    return s
 
 
-def _linha_do_tempo(prs: Any, d: DadosApresentacao) -> None:
+def _linha_do_tempo(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Optional[Any]:
     fases = [f for f in d.fases if f[1] and f[2]]
     marcos = d.marcos
     if not fases and not marcos:
-        return
-    s = _slide(prs, "Linha do tempo", d)
+        return None
+    s = m.novo(titulo or "Linha do tempo")
     inicios = [f[1] for f in fases] + [m.data for m in marcos]
     fins = [f[2] for f in fases] + [m.data_fim or m.data for m in marcos]
     inicio, fim = min(inicios), max(fins) + timedelta(days=1)
@@ -288,7 +288,10 @@ def _linha_do_tempo(prs: Any, d: DadosApresentacao) -> None:
         fundo.fill.fore_color.brightness = 0.6
         if pct > 0:
             _retangulo(s, barra_x, y + Inches(0.12), int(barra_w * min(pct, 100) / 100), Inches(0.3), cor, MSO_SHAPE.ROUNDED_RECTANGLE)
-        _texto(s, barra_x + barra_w + Inches(0.05), y + Inches(0.08), Inches(0.8), Inches(0.3), f"{pct:.0f}%", 10, cor=FRACO)
+        if barra_x + barra_w + Inches(0.85) <= LARGURA - MARGEM:
+            _texto(s, barra_x + barra_w + Inches(0.05), y + Inches(0.08), Inches(0.8), Inches(0.3), f"{pct:.0f}%", 10, cor=FRACO)
+        else:  # fase que vai até a borda: o % entra no fim da barra, sem sair do slide
+            _texto(s, barra_x + barra_w - Inches(0.85), y + Inches(0.08), Inches(0.8), Inches(0.3), f"{pct:.0f}%", 10, True, TEXTO, PP_ALIGN.RIGHT)
 
     # Marcos pontuais: linha tracejada até o fim das fases + a forma + o título.
     for m in marcos:
@@ -308,12 +311,13 @@ def _linha_do_tempo(prs: Any, d: DadosApresentacao) -> None:
         _texto(s, x(d.hoje) - Inches(0.4), base + Inches(0.02), Inches(0.8), Inches(0.3), "hoje", 10, True, VERMELHO, PP_ALIGN.CENTER)
     if not fases:
         _texto(s, MARGEM, base + Inches(0.4), Inches(10), Inches(0.4), "Nenhuma fase com datas ainda: só os marcos aparecem.", 12, cor=FRACO)
+    return s
 
 
-def _marcos(prs: Any, d: DadosApresentacao) -> None:
+def _marcos(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Optional[Any]:
     if not d.marcos:
-        return
-    s = _slide(prs, "Marcos", d)
+        return None
+    s = m.novo(titulo or "Marcos")
     linhas = [["Data", "Marco", "Descrição"]]
     cores = {}
     for i, m in enumerate(d.marcos[:14], start=1):
@@ -323,12 +327,13 @@ def _marcos(prs: Any, d: DadosApresentacao) -> None:
     _tabela(s, MARGEM, Inches(1.25), LARGURA - 2 * MARGEM, linhas, [2.2, 3, 7], cores)
     if len(d.marcos) > 14:
         _texto(s, MARGEM, ALTURA - Inches(0.9), Inches(8), Inches(0.3), f"+{len(d.marcos) - 14} marco(s) no sistema.", 11, cor=FRACO)
+    return s
 
 
-def _pilares(prs: Any, d: DadosApresentacao) -> None:
+def _pilares(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Optional[Any]:
     if not d.pilares:
-        return
-    s = _slide(prs, "Pilares", d)
+        return None
+    s = m.novo(titulo or "Pilares")
     linhas = [["Farol", "Pilar", "Andamento", "Tarefas", "Atrasadas", "Orçado", "Realizado", "Situação"]]
     cores = {}
     for i, p in enumerate(d.pilares[:12], start=1):
@@ -337,13 +342,14 @@ def _pilares(prs: Any, d: DadosApresentacao) -> None:
                        _moeda(p.valor_realizado), _limpo(p.status_texto or "—", 90)])
         cores[(i, 0)] = COR_FAROL[p.farol]
     _tabela(s, MARGEM, Inches(1.25), LARGURA - 2 * MARGEM, linhas, [1.2, 2, 1.3, 1.1, 1.1, 1.8, 1.8, 4], cores)
+    return s
 
 
-def _orcamento(prs: Any, d: DadosApresentacao) -> None:
+def _orcamento(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Optional[Any]:
     o = d.orcamento
     if not o.itens:
-        return
-    s = _slide(prs, "Orçamento", d)
+        return None
+    s = m.novo(titulo or "Orçamento")
     largura = (LARGURA - 2 * MARGEM - Inches(0.6)) // 4
     cartoes = [("Orçado (itens)", _moeda(o.total_orcado), False), ("Realizado", _moeda(o.total_realizado), False),
                ("Saldo", _moeda(o.saldo), o.saldo < 0),
@@ -359,13 +365,14 @@ def _orcamento(prs: Any, d: DadosApresentacao) -> None:
     alertas = [a.mensagem for a in o.alertas][:5] or ["Nenhum alerta: execução dentro do orçado."]
     _texto(s, MARGEM + Inches(7.9), Inches(2.6), Inches(4.2), Inches(0.4), "Alertas", 14, True)
     _texto(s, MARGEM + Inches(7.9), Inches(3.05), Inches(4.2), Inches(3.8), "\n".join(f"• {_limpo(a, 160)}" for a in alertas), 11)
+    return s
 
 
-def _gargalos(prs: Any, d: DadosApresentacao) -> None:
+def _gargalos(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Optional[Any]:
     g = d.gargalos
     if not g.piores:
-        return
-    s = _slide(prs, "Gargalos: onde o prazo escapou", d)
+        return None
+    s = m.novo(titulo or "Gargalos: onde o prazo escapou")
     pessoas = [p for p in g.por_responsavel if p.dias_atraso_entregues + p.dias_atraso_abertas > 0][:8]
     if pessoas:
         _texto(s, MARGEM, Inches(1.15), Inches(6), Inches(0.4), "Dias de atraso por responsável", 14, True)
@@ -383,13 +390,14 @@ def _gargalos(prs: Any, d: DadosApresentacao) -> None:
         resumo = "Áreas com mais atraso: " + ", ".join(
             f"{_limpo(a.nome, 25)} ({a.dias_atraso_entregues + a.dias_atraso_abertas} d)" for a in areas)
         _texto(s, x, ALTURA - Inches(1.2), Inches(5.6), Inches(0.6), resumo, 11, cor=FRACO)
+    return s
 
 
-def _atencao(prs: Any, d: DadosApresentacao) -> None:
+def _atencao(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Optional[Any]:
     proximos = [m for m in d.marcos if m.data >= d.hoje][:6]
     if not d.atrasadas and not proximos:
-        return
-    s = _slide(prs, "Pontos de atenção", d)
+        return None
+    s = m.novo(titulo or "Pontos de atenção")
     if d.atrasadas:
         _texto(s, MARGEM, Inches(1.15), Inches(6), Inches(0.4), "Tarefas atrasadas", 14, True, VERMELHO)
         linhas = [["Tarefa", "Responsável", "Prazo", "Atraso"]] + [
@@ -400,15 +408,192 @@ def _atencao(prs: Any, d: DadosApresentacao) -> None:
         _texto(s, x, Inches(1.15), Inches(4.7), Inches(0.4), "Próximos marcos", 14, True)
         _texto(s, x, Inches(1.6), Inches(4.7), Inches(4.5),
                "\n".join(f"{_data(m.data)} · {_limpo(m.titulo, 50)}" for m in proximos), 13)
+    return s
 
 
-def gerar_pptx(d: DadosApresentacao) -> bytes:
-    prs = Presentation()
-    prs.slide_width, prs.slide_height = LARGURA, ALTURA
-    prs.core_properties.title = _limpo(f"Apresentação - {d.projeto.nome_projeto}", 250)
-    prs.core_properties.author = _limpo(d.gerado_por, 250)
-    for montar in (_capa, _resumo, _linha_do_tempo, _marcos, _pilares, _orcamento, _gargalos, _atencao):
-        montar(prs, d)
-    buffer = io.BytesIO()
-    prs.save(buffer)
-    return buffer.getvalue()
+def _grafico_linhas(slide: Any, x: int, y: int, w: int, h: int, categorias: List[str],
+                    series: List[Tuple[str, List[Optional[float]], RGBColor]], titulo: str, formato: str) -> None:
+    dados = CategoryChartData()
+    dados.categories = categorias
+    for nome, valores, _ in series:
+        dados.add_series(nome, valores)
+    grafico = slide.shapes.add_chart(XL_CHART_TYPE.LINE, x, y, w, h, dados).chart
+    grafico.has_title = True
+    grafico.chart_title.text_frame.text = titulo
+    grafico.chart_title.text_frame.paragraphs[0].runs[0].font.size = Pt(13)
+    grafico.has_legend = True
+    grafico.legend.position = XL_LEGEND_POSITION.BOTTOM
+    grafico.legend.include_in_layout = False
+    grafico.legend.font.size = Pt(11)
+    for i, (_, _, cor) in enumerate(series):
+        serie = grafico.plots[0].series[i]
+        serie.smooth = False
+        serie.format.line.width = Pt(2.25)
+        if i == 0:
+            serie.format.line.dash_style = MSO_LINE_DASH_STYLE.DASH  # planejado tracejado, como na tela
+        if _CORES_PROPRIAS.get():
+            serie.format.line.color.rgb = cor
+    eixo = grafico.value_axis
+    eixo.has_major_gridlines = True
+    eixo.major_gridlines.format.line.color.rgb = BORDA
+    eixo.tick_labels.font.size = Pt(10)
+    eixo.tick_labels.number_format = formato
+    eixo.tick_labels.number_format_is_linked = False
+    grafico.category_axis.tick_labels.font.size = Pt(9)
+
+
+def _curva_s(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Optional[Any]:
+    c = d.curva
+    if c is None or not c.pontos:
+        return None
+    s = m.novo(titulo or "Curva S: planejado x realizado")
+    passo = max(1, len(c.pontos) // 24)
+    pontos = c.pontos[::passo]
+    if pontos[-1] is not c.pontos[-1]:
+        pontos.append(c.pontos[-1])
+    categorias = [p.data.strftime("%d/%m/%y") for p in pontos]
+    largura = (LARGURA - 2 * MARGEM - Inches(0.3)) // (2 if c.com_orcamento else 1)
+    _grafico_linhas(s, MARGEM, Inches(1.65), largura, Inches(4.6), categorias, [
+        ("Planejado (%)", [p.planejado_pct for p in pontos], SERIE_PLANEJADO),
+        ("Realizado (%)", [p.realizado_pct for p in pontos], SERIE_REALIZADO),
+    ], "Físico (% do cronograma)", '0"%"')
+    if c.com_orcamento:
+        _grafico_linhas(s, MARGEM + largura + Inches(0.3), Inches(1.65), largura, Inches(4.6), categorias, [
+            ("Planejado (R$)", [float(p.planejado_rs or 0) for p in pontos], SERIE_PLANEJADO),
+            ("Realizado (R$)", [None if p.realizado_rs is None else float(p.realizado_rs) for p in pontos], SERIE_REALIZADO),
+        ], "Financeiro (R$ acumulado)", '"R$" #,##0')
+    if c.realizado_hoje is not None and c.planejado_hoje is not None:
+        desvio = c.desvio_pp or 0
+        situacao = "adiantado" if desvio > 0 else "atrasado" if desvio < 0 else "em dia"
+        resumo = (f"Hoje: planejado {c.planejado_hoje:.0f}%, realizado {c.realizado_hoje:.0f}% "
+                  f"({desvio:+.0f} pontos, {situacao}; IDP {c.idp if c.idp is not None else '—'}).")
+        if c.realizado_rs_hoje is not None:
+            resumo += f"  Gasto: {_moeda(c.realizado_rs_hoje)} de {_moeda(c.planejado_rs_hoje)} previstos até hoje."
+        _texto(s, MARGEM, Inches(1.15), LARGURA - 2 * MARGEM, Inches(0.45), resumo, 13, cor=TEXTO)
+    return s
+
+
+def _texto_livre(m: "Montagem", d: DadosApresentacao, titulo: Optional[str], texto: Optional[str]) -> Any:
+    linhas = [_limpo(linha, 300).lstrip("-•* ").strip() for linha in (texto or "").splitlines() if linha.strip()][:14]
+    if m.com_modelo:
+        return m.texto_do_modelo(titulo or "Comentários", linhas)
+    s = m.novo(titulo or "Comentários")
+    _texto(s, MARGEM, Inches(1.25), LARGURA - 2 * MARGEM, Inches(5.5), "\n".join(f"•  {linha}" for linha in linhas) or " ", 20)
+    return s
+
+
+TIPOS_DE_SLIDE = {
+    "capa": "Capa", "resumo": "Resumo e indicadores", "curva_s": "Curva S (físico e financeiro)",
+    "linha_do_tempo": "Linha do tempo com marcos", "marcos": "Marcos", "pilares": "Pilares",
+    "orcamento": "Orçamento", "gargalos": "Gargalos", "atencao": "Pontos de atenção", "texto": "Slide de texto",
+}
+PADRAO = ["capa", "resumo", "curva_s", "linha_do_tempo", "marcos", "pilares", "orcamento", "gargalos", "atencao"]
+_CONSTRUTORES = {
+    "capa": _capa, "resumo": _resumo, "curva_s": _curva_s, "linha_do_tempo": _linha_do_tempo, "marcos": _marcos,
+    "pilares": _pilares, "orcamento": _orcamento, "gargalos": _gargalos, "atencao": _atencao,
+}
+_CORES_PROPRIAS: ContextVar[bool] = ContextVar("_CORES_PROPRIAS", default=True)
+# Área de conteúdo dos slides do PMO (abaixo do título, acima do rodapé): é o que se reposiciona no modelo.
+_VX0, _VX1, _VY0, _VY1 = MARGEM, LARGURA - MARGEM, Inches(1.1), Inches(7.0)
+
+
+@dataclass
+class SlidePedido:
+    tipo: str
+    titulo: Optional[str] = None
+    texto: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class Montagem:
+    """
+    Monta a apresentação no visual do PMO ou no MODELO DA EMPRESA. Com modelo: os slides usam os layouts
+    dele (título no lugar e na fonte deles, logotipo, fundo, cores do tema nos gráficos) e o conteúdo,
+    desenhado para 16:9, é reposicionado na área livre do layout (vale também para modelos 4:3).
+    """
+
+    def __init__(self, modelo: Optional[bytes]) -> None:
+        self.com_modelo = modelo is not None
+        if modelo is None:
+            self.prs = Presentation()
+            self.prs.slide_width, self.prs.slide_height = LARGURA, ALTURA
+            return
+        self.prs = Presentation(io.BytesIO(modelo))
+        modelos_pptx.remover_slides(self.prs)
+        self.layout_capa = modelos_pptx.layout_com(self.prs, "capa")
+        self.layout_titulo = modelos_pptx.layout_com(self.prs, "titulo")
+        self.layout_texto = modelos_pptx.layout_com(self.prs, "texto")
+        self._fixas: Dict[int, set] = {}
+
+    def novo(self, titulo: str) -> Any:
+        if not self.com_modelo:
+            s = self.prs.slides.add_slide(self.prs.slide_layouts[6])
+            _retangulo(s, 0, 0, LARGURA, Inches(0.08), AZUL)
+            _texto(s, MARGEM, Inches(0.3), LARGURA - 2 * MARGEM, Inches(0.7), titulo, 26, True)
+            return s
+        s = self.prs.slides.add_slide(self.layout_titulo)
+        modelos_pptx.preencher(s, titulo, [])
+        self._fixas[s.slide_id] = {forma.shape_id for forma in s.shapes}  # o resto é conteúdo, a reposicionar
+        return s
+
+    def capa_do_modelo(self, titulo: str, linhas: List[str]) -> Any:
+        s = self.prs.slides.add_slide(self.layout_capa)
+        modelos_pptx.preencher(s, titulo, linhas)
+        return s
+
+    def texto_do_modelo(self, titulo: str, linhas: List[str]) -> Any:
+        s = self.prs.slides.add_slide(self.layout_texto)
+        modelos_pptx.preencher(s, titulo, linhas)
+        return s
+
+    def reposicionar(self, slide: Any) -> None:
+        """Conteúdo desenhado na área 16:9 do PMO -> área livre abaixo do título do layout do modelo."""
+        fixas = self._fixas.get(slide.slide_id) if self.com_modelo else None
+        if fixas is None:
+            return
+        x0, y0, x1, y1 = modelos_pptx.area_de_conteudo(self.prs, slide)
+        ex, ey = (x1 - x0) / (_VX1 - _VX0), (y1 - y0) / (_VY1 - _VY0)
+        for forma in slide.shapes:
+            if forma.shape_id in fixas:
+                continue
+            forma.left = int(x0 + (forma.left - _VX0) * ex)
+            forma.top = int(y0 + (forma.top - _VY0) * ey)
+            forma.width, forma.height = max(int(forma.width * ex), 1), max(int(forma.height * ey), 1)
+            if forma.has_table:
+                for coluna in forma.table.columns:
+                    coluna.width = max(int(coluna.width * ex), 1)
+
+    def salvar(self) -> bytes:
+        buffer = io.BytesIO()
+        self.prs.save(buffer)
+        return buffer.getvalue()
+
+
+def gerar_pptx(d: DadosApresentacao, slides: Optional[Sequence[Any]] = None, modelo: Optional[bytes] = None) -> bytes:
+    """
+    `slides`: o que o montador pediu (tipo, título, texto, notas), na ordem; None = a apresentação padrão.
+    `modelo`: o .pptx normalizado da empresa (app/modelos_pptx.py). Slides sem conteúdo (ex.: orçamento
+    num projeto sem orçamento) são pulados.
+    """
+    m = Montagem(modelo)
+    token = _CORES_PROPRIAS.set(not m.com_modelo)
+    try:
+        m.prs.core_properties.title = _limpo(f"Apresentação - {d.projeto.nome_projeto}", 250)
+        m.prs.core_properties.author = _limpo(d.gerado_por, 250)
+        for pedido in (slides if slides is not None else [SlidePedido(t) for t in PADRAO]):
+            titulo = _limpo(pedido.titulo, 120) if pedido.titulo else None
+            if pedido.tipo == "texto":
+                slide = _texto_livre(m, d, titulo, pedido.texto)
+            else:
+                slide = _CONSTRUTORES[pedido.tipo](m, d, titulo)
+            if slide is None:
+                continue
+            if not m.com_modelo and pedido.tipo != "capa":
+                _texto(slide, MARGEM, ALTURA - Inches(0.45), LARGURA - 2 * MARGEM, Inches(0.3),
+                       f"{_limpo(d.projeto.nome_projeto, 80)} · PMO", 9, cor=FRACO)
+            m.reposicionar(slide)
+            if pedido.notas:
+                slide.notes_slide.notes_text_frame.text = _limpo(pedido.notas, 3000)
+        return m.salvar()
+    finally:
+        _CORES_PROPRIAS.reset(token)

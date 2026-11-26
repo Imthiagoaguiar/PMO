@@ -374,3 +374,66 @@ export interface Gargalos {
   por_responsavel: GrupoGargalo[]
   piores: TarefaGargalo[]
 }
+
+// ---------- Curva S, feedback e slides ----------
+
+export interface PontoCurvaS {
+  data: string
+  planejado_pct: number
+  realizado_pct: number | null
+  planejado_rs: string | null
+  realizado_rs: string | null
+}
+
+export interface CurvaS {
+  pontos: PontoCurvaS[]
+  tarefas_sem_datas: number
+  com_orcamento: boolean
+  planejado_hoje: number | null
+  realizado_hoje: number | null
+  desvio_pp: number | null
+  idp: number | null
+  planejado_rs_hoje: string | null
+  realizado_rs_hoje: string | null
+}
+
+export interface NumerosFeedback {
+  tarefas: number
+  entregues: number
+  no_prazo: number
+  antecipadas: number
+  entregues_atrasadas: number
+  atraso_medio: number | null
+  pontualidade: number | null
+  abertas: number
+  abertas_vencidas: number
+  maior_atraso_aberto: number
+  reaberturas: number
+  sem_prazo: number
+}
+
+export interface FeedbackEntidade {
+  chave: string
+  nome: string
+  numeros: NumerosFeedback
+  pontos_fortes: string[]
+  pontos_a_melhorar: string[]
+  observacao: string | null
+}
+
+export interface Feedback {
+  pessoas: FeedbackEntidade[]
+  areas: FeedbackEntidade[]
+  pontualidade_projeto: number | null
+  atraso_medio_projeto: number | null
+}
+
+export type TipoSlide = "capa" | "resumo" | "curva_s" | "linha_do_tempo" | "marcos" | "pilares" | "orcamento" | "gargalos" | "atencao" | "texto"
+
+export interface ModeloApresentacao {
+  id: number
+  nome: string
+  tamanho: number
+  enviado_por: UsuarioResumo | null
+  enviado_em: string
+}

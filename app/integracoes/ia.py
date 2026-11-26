@@ -45,7 +45,8 @@ class FalhaIA(Exception):
         self.status_http = status_http
 
 
-def _chamar_groq(texto: str) -> str:
+def _chamar_groq(texto: str, sistema: Optional[str] = None, etiqueta: str = "texto", max_tokens: int = 4096) -> str:
+    """`sistema`/`etiqueta`: outros usos (ex.: feedback) com o mesmo tratamento de erros."""
     if not settings.groq_api_key:
         raise FalhaIA("Integração com IA não configurada.", 503)
 
@@ -56,12 +57,12 @@ def _chamar_groq(texto: str) -> str:
         resposta = cliente.chat.completions.create(
             model=settings.groq_modelo,
             messages=[
-                {"role": "system", "content": PROMPT_SISTEMA},
-                {"role": "user", "content": f"<texto>\n{texto}\n</texto>"},
+                {"role": "system", "content": sistema or PROMPT_SISTEMA},
+                {"role": "user", "content": f"<{etiqueta}>\n{texto}\n</{etiqueta}>"},
             ],
             response_format={"type": "json_object"},
             temperature=0.2,
-            max_completion_tokens=4096,
+            max_completion_tokens=max_tokens,
         )
     except groq.APITimeoutError:
         logger.warning("Groq: timeout")

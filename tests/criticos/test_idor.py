@@ -60,6 +60,8 @@ CORPOS = {  # corpos válidos: o 404 tem de vir da AUTORIZAÇÃO, não de um 422
         "item_id": c["item_id"], "valor": "1.00", "data": "2026-01-01", "descricao": "invasão"},
     ("PATCH", "/projetos/{projeto_id}/orcamento/lancamentos/{lancamento_id}"): {"valor": "999999.00"},
     ("POST", "/projetos/{projeto_id}/tarefas/{tarefa_id}/anexos"): {"__arquivo__": ("invasao.txt", b"invasao")},
+    ("POST", "/projetos/{projeto_id}/feedback/ia"): {"tipo": "pessoa", "chave": "x"},
+    ("POST", "/projetos/{projeto_id}/apresentacao"): {"slides": [{"tipo": "capa"}]},
 }
 
 
@@ -241,7 +243,9 @@ def test_membro_alheio_pela_url(client, cenario, projeto_do_intruso):
 
 # ---------- Visualizador ----------
 
-ESCRITAS = [(m, p) for m, p in _rotas_de_projeto() if m != "GET" and "/comentarios" not in p]
+# POST que só LÊ (o montador de slides gera um arquivo a partir dos dados): o visualizador pode usar.
+SO_LEITURA = {("POST", "/projetos/{projeto_id}/apresentacao")}
+ESCRITAS = [(m, p) for m, p in _rotas_de_projeto() if m != "GET" and "/comentarios" not in p and (m, p) not in SO_LEITURA]
 
 
 @pytest.mark.parametrize("metodo, caminho", ESCRITAS)

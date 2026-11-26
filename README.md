@@ -26,8 +26,18 @@ MVP de PMO para projetos Waterfall.
 - **Anexos nas tarefas** (até 25 MB cada, 2 GB por projeto; programas e scripts recusados) e a aba **Arquivos** com o
   histórico de todos os arquivos do projeto, inclusive de tarefas já excluídas. Os arquivos entram no backup.
 - **Gargalos**: dias de atraso acumulados por pessoa, área (pilar) e fase, pontualidade e as tarefas mais atrasadas.
-- **Apresentação em PowerPoint** (.pptx): resumo, linha do tempo com marcos e bandeiras, pilares, orçamento,
-  gargalos e pontos de atenção, com gráficos nativos (editáveis no PowerPoint).
+- **Curva S** (aba própria): planejado x realizado acumulados semana a semana, **física** (% do cronograma, com as
+  tarefas longas pesando mais; o realizado sai do histórico de andamento) e **financeira** (o orçado distribuído pela
+  curva planejada x os lançamentos), com desvio em pontos e IDP (índice de desempenho de prazo).
+- **Feedback de pessoas e áreas** (aba visível só para o dono do projeto e administradores): pontos fortes e pontos a
+  melhorar calculados por regras a partir do cronograma (pontualidade, entregas antecipadas, atrasos em aberto,
+  retrabalho, tarefas sem prazo, sobrecarga), sempre comparando com a média do projeto e só julgando com pelo menos
+  3 entregas. Botão opcional "Sugerir texto com IA" (Groq), que recebe só os números, sem nomes nem títulos de tarefas.
+- **Apresentação em PowerPoint** (.pptx) com **montador**: escolha os slides (capa, resumo, curva S, linha do tempo com
+  marcos e bandeiras, marcos, pilares, orçamento, gargalos, pontos de atenção), a ordem e os títulos, escreva notas do
+  apresentador e slides de texto próprios. Gráficos nativos (editáveis no PowerPoint). O admin pode enviar o **modelo
+  da empresa** (.pptx ou .potx, sem macros, até 20 MB): a apresentação sai com o tema, as cores, as fontes e o tamanho
+  de slide dele (16:9 ou 4:3).
 - **Lembrete por e-mail** para quem tem tarefa atrasada: um e-mail por pessoa com todas as atrasadas, a cada 4 h,
   só em dias úteis das 8h às 18h. Cada pessoa pode silenciar por 24 h no menu do seu nome.
 - **Relatório em PDF** do projeto: resumo e indicadores, pilares, orçamento, linha do tempo (Gantt com marcos),

@@ -90,7 +90,14 @@ for nome in "${SERVICOS[@]}"; do
 </plist>
 PLIST
   launchctl bootout "$ALVO/$rotulo" 2>/dev/null || true
-  launchctl bootstrap "$ALVO" "$plist"
+  # O bootout é assíncrono: um bootstrap logo em seguida falha com "5: Input/output error" enquanto o
+  # serviço antigo ainda está saindo. Espera ele sumir e tenta de novo algumas vezes.
+  for _ in $(seq 1 20); do launchctl print "$ALVO/$rotulo" >/dev/null 2>&1 || break; sleep 0.5; done
+  for tentativa in 1 2 3 4 5; do
+    launchctl bootstrap "$ALVO" "$plist" 2>/dev/null && break
+    [ "$tentativa" = 5 ] && { echo "Não consegui ligar $rotulo (launchctl bootstrap falhou 5 vezes)"; exit 1; }
+    sleep 1
+  done
 done
 
 for _ in $(seq 1 30); do curl -sf -m 2 http://localhost:8000/saude >/dev/null && break; sleep 1; done

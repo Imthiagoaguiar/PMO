@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useCallback } from "react"
 
 import { api } from "@/lib/api"
-import type { Dependencia, Gargalos, Indicadores, Marco, Membro, Pilar, Projeto, ResumoOrcamento } from "@/lib/tipos"
+import type { CurvaS, Dependencia, Feedback, Gargalos, Indicadores, Marco, Membro, Pilar, Projeto, ResumoOrcamento } from "@/lib/tipos"
 
 export const chaves = {
   projeto: (id: number) => ["projeto", id] as const,
@@ -13,6 +13,8 @@ export const chaves = {
   marcos: (id: number) => ["projeto", id, "marcos"] as const,
   orcamento: (id: number) => ["projeto", id, "orcamento"] as const,
   gargalos: (id: number) => ["projeto", id, "gargalos"] as const,
+  curvaS: (id: number) => ["projeto", id, "curva-s"] as const,
+  feedback: (id: number) => ["projeto", id, "feedback"] as const,
   comentarios: (id: number, filtro: string) => ["projeto", id, "comentarios", filtro] as const,
   historico: (id: number, offset: number) => ["projeto", id, "historico", offset] as const,
 }
@@ -47,6 +49,14 @@ export function useOrcamento(id: number) {
 
 export function useGargalos(id: number) {
   return useQuery({ queryKey: chaves.gargalos(id), queryFn: () => api<Gargalos>(`/projetos/${id}/gargalos`) })
+}
+
+export function useCurvaS(id: number) {
+  return useQuery({ queryKey: chaves.curvaS(id), queryFn: () => api<CurvaS>(`/projetos/${id}/curva-s`) })
+}
+
+export function useFeedback(id: number, ativo: boolean) {
+  return useQuery({ queryKey: chaves.feedback(id), queryFn: () => api<Feedback>(`/projetos/${id}/feedback`), enabled: ativo })
 }
 
 /** Depois de qualquer alteração: recarrega projeto, indicadores, membros e histórico. */
