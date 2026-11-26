@@ -352,7 +352,7 @@ export function NovoProjeto({ aberto, aoFechar }: { aberto: boolean; aoFechar: (
               <Campo
                 label="Planilha (.xlsx ou .csv, até 20 MB e 100 mil linhas)"
                 htmlFor="np-arquivo"
-                dica="Colunas: Fase e Descrição (obrigatórias); Data Início, Data Fim, Responsável e % Conclusão (opcionais). Um arquivo exportado pelo PMO também serve."
+                dica="Colunas: Fase e Descrição (obrigatórias); Data Início, Data Fim, Responsável e % Conclusão (opcionais). Um arquivo exportado pelo OMPY também serve."
               >
                 <Input
                   id="np-arquivo"

@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { ApiError, api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
+import { TelaDaMarca } from "@/components/Logo"
 
 function Moldura({ icone, titulo, descricao, children }: {
   icone: ReactNode
@@ -18,16 +19,16 @@ function Moldura({ icone, titulo, descricao, children }: {
   children: ReactNode
 }) {
   return (
-    <div className="flex min-h-svh items-center justify-center bg-muted/40 px-4">
+    <TelaDaMarca>
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">{icone}</div>
+          <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-marca text-marca-foreground">{icone}</div>
           <CardTitle className="text-xl">{titulo}</CardTitle>
           <CardDescription>{descricao}</CardDescription>
         </CardHeader>
         <CardContent>{children}</CardContent>
       </Card>
-    </div>
+    </TelaDaMarca>
   )
 }
 

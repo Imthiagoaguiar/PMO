@@ -32,11 +32,12 @@ from app.config import settings
 from app.models import CorMarco, FarolPilar, FormaMarco, MarcoLinhaTempo, Projeto
 from app.schemas import CurvaS, Gargalos, PilarRead, ProjetoIndicadores, ResumoOrcamento
 
-AZUL = RGBColor(0x1D, 0x4E, 0xD8)
-TEXTO = RGBColor(0x1E, 0x29, 0x3B)
-FRACO = RGBColor(0x64, 0x74, 0x8B)
-BORDA = RGBColor(0xE2, 0xE8, 0xF0)
-FUNDO = RGBColor(0xF8, 0xFA, 0xFC)
+PRETO = RGBColor(0x0A, 0x0A, 0x0A)  # marca OMPY: preto e branco com detalhes em amarelo
+AMARELO = RGBColor(0xFA, 0xCC, 0x15)
+TEXTO = RGBColor(0x17, 0x17, 0x17)
+FRACO = RGBColor(0x6B, 0x6B, 0x6B)
+BORDA = RGBColor(0xE5, 0xE5, 0xE5)
+FUNDO = RGBColor(0xFA, 0xFA, 0xFA)
 BRANCO = RGBColor(0xFF, 0xFF, 0xFF)
 VERMELHO = RGBColor(0xDC, 0x26, 0x26)
 # As mesmas cores validadas dos gráficos da tela: realizado azul, orçado/planejado laranja.
@@ -210,7 +211,8 @@ def _capa(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Any:
     if m.com_modelo:
         return m.capa_do_modelo(nome, linhas)
     s = m.prs.slides.add_slide(m.prs.slide_layouts[6])
-    _retangulo(s, 0, 0, Inches(0.35), ALTURA, AZUL)
+    _retangulo(s, 0, 0, Inches(0.35), ALTURA, PRETO)
+    _retangulo(s, Inches(0.35), 0, Inches(0.08), ALTURA, AMARELO)
     _texto(s, Inches(1.2), Inches(2.2), Inches(11), Inches(1.4), nome, 40, True)
     _texto(s, Inches(1.2), Inches(3.6), Inches(11), Inches(1.2), "\n".join(linhas[:2]), 18, cor=FRACO)
     _texto(s, Inches(1.2), ALTURA - Inches(1.1), Inches(11), Inches(0.5), linhas[2], 12, cor=FRACO)
@@ -528,7 +530,7 @@ class Montagem:
     def novo(self, titulo: str) -> Any:
         if not self.com_modelo:
             s = self.prs.slides.add_slide(self.prs.slide_layouts[6])
-            _retangulo(s, 0, 0, LARGURA, Inches(0.08), AZUL)
+            _retangulo(s, 0, 0, LARGURA, Inches(0.08), AMARELO)
             _texto(s, MARGEM, Inches(0.3), LARGURA - 2 * MARGEM, Inches(0.7), titulo, 26, True)
             return s
         s = self.prs.slides.add_slide(self.layout_titulo)
@@ -590,7 +592,7 @@ def gerar_pptx(d: DadosApresentacao, slides: Optional[Sequence[Any]] = None, mod
                 continue
             if not m.com_modelo and pedido.tipo != "capa":
                 _texto(slide, MARGEM, ALTURA - Inches(0.45), LARGURA - 2 * MARGEM, Inches(0.3),
-                       f"{_limpo(d.projeto.nome_projeto, 80)} · PMO", 9, cor=FRACO)
+                       f"{_limpo(d.projeto.nome_projeto, 80)} · OMPY", 9, cor=FRACO)
             m.reposicionar(slide)
             if pedido.notas:
                 slide.notes_slide.notes_text_frame.text = _limpo(pedido.notas, 3000)

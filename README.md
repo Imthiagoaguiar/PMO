@@ -1,6 +1,8 @@
-# PMO Waterfall
+# OMPY
 
-MVP de PMO para projetos Waterfall.
+Gestão de projetos, da ideia à entrega (PMO para projetos Waterfall). Visual preto e branco com detalhes em amarelo;
+a logo é uma lâmpada, a "ideia" (`frontend/src/components/Logo.tsx` e `frontend/public/favicon.svg`).
+Os nomes técnicos continuam `pmo` (pasta, pacote do front, serviços `com.pmo.*`): trocar só a marca não exige migrar nada.
 
 - `app/` — API: FastAPI + SQLAlchemy (PostgreSQL) + Pandas
 - `frontend/` — React + TypeScript (Vite, Tailwind, shadcn/ui, TanStack Query)

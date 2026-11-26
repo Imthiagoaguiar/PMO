@@ -223,7 +223,7 @@ def executar(agora: bool = False, simular: bool = False, caches: bool = False) -
         aviso = f"Liberados {liberado} GB; disco com {depois} GB livres."
         if depois < settings.limpeza_min_gb:
             aviso += " Ainda está baixo: veja a Lixeira e Downloads."
-        avisar_no_mac("PMO: limpeza do disco", aviso)
+        avisar_no_mac("OMPY: limpeza do disco", aviso)
     return resultado
 
 

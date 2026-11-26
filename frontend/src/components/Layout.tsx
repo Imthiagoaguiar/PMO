@@ -7,6 +7,7 @@ import { NavLink, Outlet, useNavigate } from "react-router"
 import { AlterarSenha } from "@/components/AlterarSenha"
 import { NOMES_PAPEL_USUARIO } from "@/components/comum"
 import { DoisFatoresDialog } from "@/components/DoisFatores"
+import { Logo } from "@/components/Logo"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -29,7 +30,7 @@ function ItemMenu({ para, icone: Icone, children }: { para: string; icone: typeo
       className={({ isActive }) =>
         cn(
           "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-          isActive && "bg-accent text-foreground",
+          isActive && "bg-accent text-foreground shadow-[inset_0_-2px_0_var(--marca)]",
         )
       }
     >
@@ -64,13 +65,11 @@ export function Layout() {
 
   return (
     <div className="min-h-svh">
-      <header className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur">
+      <header className="sticky top-0 z-30 border-t-[3px] border-b border-t-marca bg-card/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-4">
-          <NavLink to="/projetos" className="mr-4 flex items-center gap-2 font-semibold">
-            <span className="flex size-7 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground">
-              PMO
-            </span>
-            <span className="hidden md:inline">Waterfall</span>
+          <NavLink to="/projetos" className="mr-4 flex items-center gap-2" aria-label="OMPY: projetos">
+            <Logo />
+            <span className="hidden text-lg font-extrabold tracking-tight md:inline">OMPY</span>
           </NavLink>
           <nav className="flex flex-1 items-center gap-1">
             <ItemMenu para="/projetos" icone={FolderKanban}>Projetos</ItemMenu>

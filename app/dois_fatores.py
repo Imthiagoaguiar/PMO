@@ -18,7 +18,7 @@ from app.cripto import cifrar, decifrar
 from app.models import CodigoRecuperacao, Usuario
 from app.security import agora_utc, hash_token
 
-EMISSOR = "PMO Waterfall"  # nome que aparece no app autenticador
+EMISSOR = "OMPY"  # nome que aparece no app autenticador
 PERIODO_SEGUNDOS = 30
 QTD_CODIGOS_RECUPERACAO = 10
 # Sem 0/O e 1/I/L: o código vai ser digitado a partir de um papel.

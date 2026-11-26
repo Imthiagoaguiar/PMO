@@ -70,7 +70,7 @@ def test_ativar_2fa(client, criar_usuario, relogio):
     r = client.post("/auth/2fa/iniciar", json={"senha": SENHA}, headers=h)
     assert r.status_code == 200
     segredo, uri = r.json()["segredo"], r.json()["uri"]
-    assert uri.startswith("otpauth://totp/PMO%20Waterfall:alvo%40empresa.com.br?secret=")
+    assert uri.startswith("otpauth://totp/OMPY:alvo%40empresa.com.br?secret=")
 
     with SessionLocal() as db:  # o segredo fica cifrado no banco
         guardado = db.get(Usuario, usuario.id).totp_segredo_cifrado

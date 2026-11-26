@@ -14,6 +14,7 @@ import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { notificarErro } from "@/lib/formato"
 import type { StatusDoisFatores } from "@/lib/tipos"
+import { TelaDaMarca } from "@/components/Logo"
 
 // ---------- Peças ----------
 
@@ -37,7 +38,7 @@ function CampoCodigo({ valor, aoMudar, id = "codigo-2fa" }: { valor: string; aoM
 /** Mostra os códigos de recuperação uma única vez, com copiar e baixar. */
 function CodigosRecuperacao({ codigos, aoConcluir, rotuloConcluir }: { codigos: string[]; aoConcluir: () => void; rotuloConcluir: string }) {
   const [guardou, setGuardou] = useState(false)
-  const texto = `Códigos de recuperação do PMO Waterfall\nCada código vale uma única vez.\n\n${codigos.join("\n")}\n`
+  const texto = `Códigos de recuperação do OMPY\nCada código vale uma única vez.\n\n${codigos.join("\n")}\n`
 
   function baixar() {
     const url = URL.createObjectURL(new Blob([texto], { type: "text/plain" }))
@@ -320,10 +321,10 @@ export function DoisFatoresDialog({ aberto, aoFechar }: { aberto: boolean; aoFec
 export function DoisFatoresObrigatorio() {
   const { usuario, sair } = useAuth()
   return (
-    <div className="flex min-h-svh items-center justify-center bg-muted/40 px-4 py-8">
+    <TelaDaMarca>
       <Card className="w-full max-w-lg">
         <CardHeader>
-          <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-marca text-marca-foreground">
             <ShieldCheck className="size-5" />
           </div>
           <CardTitle className="text-xl">Ative a verificação em duas etapas</CardTitle>
@@ -339,6 +340,6 @@ export function DoisFatoresObrigatorio() {
           </Button>
         </CardContent>
       </Card>
-    </div>
+    </TelaDaMarca>
   )
 }

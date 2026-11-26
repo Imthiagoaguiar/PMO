@@ -143,7 +143,7 @@ class Settings(BaseSettings):
 
     resend_api_key: Optional[str] = None
     # Em teste, o Resend só entrega a partir de onboarding@resend.dev (e só para o e-mail da sua conta).
-    email_remetente: str = "PMO <onboarding@resend.dev>"
+    email_remetente: str = "OMPY <onboarding@resend.dev>"
     # Endereço do front usado nos links dos e-mails (redefinição de senha). Padrão: a 1ª de CORS_ORIGENS.
     frontend_url: Optional[str] = None
     redefinicao_senha_minutos: int = Field(30, ge=5, le=24 * 60)

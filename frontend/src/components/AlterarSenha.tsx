@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { notificarErro } from "@/lib/formato"
+import { TelaDaMarca } from "@/components/Logo"
 
 export const SENHA_MIN = 12
 export const DICA_SENHA =
@@ -95,7 +96,7 @@ export function AlterarSenha({ aberto, aoFechar }: { aberto: boolean; aoFechar: 
 export function TrocaObrigatoria() {
   const { usuario, sair } = useAuth()
   return (
-    <div className="flex min-h-svh items-center justify-center bg-muted/40 px-4">
+    <TelaDaMarca>
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-xl">Defina a sua senha</CardTitle>
@@ -110,6 +111,6 @@ export function TrocaObrigatoria() {
           </Button>
         </CardContent>
       </Card>
-    </div>
+    </TelaDaMarca>
   )
 }

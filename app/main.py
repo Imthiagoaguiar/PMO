@@ -20,7 +20,7 @@ logger = logging.getLogger("pmo")
 
 # As tabelas são criadas/alteradas pelo Alembic: `alembic upgrade head`.
 app = FastAPI(
-    title="PMO Waterfall API",
+    title="OMPY API",
     version="1.0.0",
     # A documentação interativa expõe todo o mapa da API: só fica ligada em dev.
     docs_url=None if EM_PRODUCAO else "/docs",

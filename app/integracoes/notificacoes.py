@@ -69,13 +69,13 @@ def enviar_redefinicao_senha(destinatario: str, nome_destinatario: str, link: st
     pessoa_html, link_html = html.escape(_linha_unica(nome_destinatario)), html.escape(link, quote=True)
     return _enviar(
         destinatario,
-        "Redefinição de senha do PMO",
+        "Redefinição de senha do OMPY",
         f"<p>Olá, {pessoa_html}.</p>"
-        "<p>Recebemos um pedido para redefinir a sua senha do PMO.</p>"
+        "<p>Recebemos um pedido para redefinir a sua senha do OMPY.</p>"
         f'<p><a href="{link_html}">Criar uma nova senha</a></p>'
         f"<p>O link vale por {minutos} minutos e só pode ser usado uma vez. "
         "Se você não pediu, ignore este e-mail: a sua senha continua a mesma.</p>",
-        f"Olá, {nome_destinatario}.\n\nRecebemos um pedido para redefinir a sua senha do PMO.\n"
+        f"Olá, {nome_destinatario}.\n\nRecebemos um pedido para redefinir a sua senha do OMPY.\n"
         f"Crie uma nova senha em: {link}\n\nO link vale por {minutos} minutos e só pode ser usado uma vez. "
         "Se você não pediu, ignore este e-mail: a sua senha continua a mesma.",
         "redefinição de senha",
@@ -104,10 +104,10 @@ def enviar_lembrete_atrasadas(destinatario: str, nome_destinatario: str, tarefas
     )
     mais = f"<p>…e mais {quantidade - 50} tarefa(s).</p>" if quantidade > 50 else ""
     rodape = ("Você recebe este lembrete a cada 4 horas em dias úteis enquanto houver tarefas atrasadas. "
-              "Para pausar por um dia: no PMO, menu do seu nome → Silenciar lembretes.")
+              "Para pausar por um dia: no OMPY, menu do seu nome → Silenciar lembretes.")
     return _enviar(
         destinatario,
-        f"PMO: você tem {quantidade} tarefa(s) atrasada(s)",
+        f"OMPY: você tem {quantidade} tarefa(s) atrasada(s)",
         f"<p>Olá, {html.escape(pessoa)}.</p><p>Estas tarefas sob sua responsabilidade passaram do prazo:</p>"
         "<table cellpadding='6' style='border-collapse:collapse'><tr><th align='left'>Tarefa</th>"
         "<th align='left'>Projeto</th><th align='left'>Prazo</th><th align='left'>Atraso</th><th align='left'>Feito</th></tr>"

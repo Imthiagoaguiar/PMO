@@ -217,7 +217,7 @@ export function Usuarios() {
 
   return (
     <>
-      <Cabecalho titulo="Usuários" descricao="Quem acessa o PMO e com qual papel.">
+      <Cabecalho titulo="Usuários" descricao="Quem acessa o OMPY e com qual papel.">
         <Button onClick={() => setCriando(true)}>
           <Plus /> Novo usuário
         </Button>

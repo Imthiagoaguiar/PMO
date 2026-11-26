@@ -338,4 +338,4 @@ def test_email_do_lembrete_escapa_textos(monkeypatch):
         {"tarefa": "<script>x</script>", "projeto": "P & Q", "prazo": date(2026, 3, 10), "dias": 10, "percentual": 0}])
     corpo = enviados[0]
     assert "<script>" not in corpo["html"] and "&lt;script&gt;" in corpo["html"] and "P &amp; Q" in corpo["html"]
-    assert corpo["subject"] == "PMO: você tem 1 tarefa(s) atrasada(s)" and "/minhas-tarefas" in corpo["text"]
+    assert corpo["subject"] == "OMPY: você tem 1 tarefa(s) atrasada(s)" and "/minhas-tarefas" in corpo["text"]

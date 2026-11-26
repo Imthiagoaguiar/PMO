@@ -24,7 +24,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import HRFlowable, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.config import settings
 from app.models import Auditoria, Comentario, CorMarco, FarolPilar, FormaMarco, MarcoLinhaTempo, Projeto
@@ -35,10 +35,12 @@ LARGURA_UTIL = A4[0] - 2 * MARGEM
 MAX_TAREFAS_LINHA_DO_TEMPO = 60
 LINHAS_POR_BLOCO = 30
 
-COR_PRIMARIA = colors.HexColor("#1d4ed8")
-COR_TEXTO_FRACO = colors.HexColor("#64748b")
-COR_BORDA = colors.HexColor("#e2e8f0")
-COR_FUNDO = colors.HexColor("#f8fafc")
+COR_PRIMARIA = colors.HexColor("#1d4ed8")  # séries "realizado" dos gráficos
+COR_MARCA = colors.HexColor("#0a0a0a")  # OMPY: preto e branco com detalhes em amarelo
+COR_AMARELO = colors.HexColor("#facc15")
+COR_TEXTO_FRACO = colors.HexColor("#6b6b6b")
+COR_BORDA = colors.HexColor("#e5e5e5")
+COR_FUNDO = colors.HexColor("#fafafa")
 CORES_FASE = [colors.HexColor(c) for c in ("#2563eb", "#7c3aed", "#059669", "#d97706", "#475569")]
 COR_FAROL = {
     FarolPilar.VERDE: colors.HexColor("#16a34a"),
@@ -197,7 +199,7 @@ ESTILOS = {
     "titulo": ParagraphStyle("titulo", fontName="Helvetica-Bold", fontSize=20, leading=24, spaceAfter=4),
     "subtitulo": ParagraphStyle("subtitulo", fontName="Helvetica", fontSize=9, leading=12, textColor=COR_TEXTO_FRACO),
     "secao": ParagraphStyle("secao", fontName="Helvetica-Bold", fontSize=13, leading=16, spaceBefore=14,
-                            spaceAfter=6, textColor=COR_PRIMARIA),
+                            spaceAfter=6, textColor=COR_MARCA),
     "normal": ParagraphStyle("normal", fontName="Helvetica", fontSize=9, leading=12),
     "pequeno": ParagraphStyle("pequeno", fontName="Helvetica", fontSize=8, leading=10),
     "fraco": ParagraphStyle("fraco", fontName="Helvetica", fontSize=8, leading=10, textColor=COR_TEXTO_FRACO),
@@ -229,6 +231,7 @@ def _secao(titulo: str) -> Paragraph:
 def _cabecalho(d: DadosRelatorio) -> List[Any]:
     gerado = _local(d.agora_utc).strftime("%d/%m/%Y às %H:%M")
     return [
+        HRFlowable(width=2 * cm, thickness=4, color=COR_AMARELO, hAlign="LEFT", spaceAfter=8),
         _p(d.projeto.nome_projeto, ESTILOS["titulo"]),
         _p(f"Relatório do projeto · gerado em {gerado} por {d.gerado_por}", ESTILOS["subtitulo"]),
         Spacer(1, 10),
@@ -659,14 +662,14 @@ def gerar_pdf(d: DadosRelatorio) -> bytes:
     nome = _limpo(d.projeto.nome_projeto)
     documento = SimpleDocTemplate(
         buffer, pagesize=A4, leftMargin=MARGEM, rightMargin=MARGEM, topMargin=MARGEM, bottomMargin=MARGEM,
-        title=f"Relatório - {nome}", author=_limpo(d.gerado_por), subject="Relatório do projeto", creator="PMO Waterfall",
+        title=f"Relatório - {nome}", author=_limpo(d.gerado_por), subject="Relatório do projeto", creator="OMPY",
     )
 
     def _rodape(canvas: Any, doc: Any) -> None:
         canvas.saveState()
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(COR_TEXTO_FRACO)
-        canvas.drawString(MARGEM, MARGEM / 2, (nome if len(nome) <= 80 else nome[:79] + "…"))
+        canvas.drawString(MARGEM, MARGEM / 2, "OMPY · " + (nome if len(nome) <= 80 else nome[:79] + "…"))
         canvas.drawRightString(A4[0] - MARGEM, MARGEM / 2, f"Página {doc.page}")
         canvas.restoreState()
 

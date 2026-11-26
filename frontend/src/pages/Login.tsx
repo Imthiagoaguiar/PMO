@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react"
 import { Link, Navigate, useLocation, useNavigate } from "react-router"
 
 import { Campo } from "@/components/comum"
+import { TelaDaMarca } from "@/components/Logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -76,16 +77,13 @@ export function Login() {
   )
 
   return (
-    <div className="flex min-h-svh items-center justify-center bg-muted/40 px-4">
+    <TelaDaMarca>
       <Card className="w-full max-w-sm">
         {!desafio ? (
           <>
             <CardHeader>
-              <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-                PMO
-              </div>
               <CardTitle className="text-xl">Entrar</CardTitle>
-              <CardDescription>Gestão de projetos Waterfall</CardDescription>
+              <CardDescription>Use seu e-mail e senha do OMPY.</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={enviarSenha} className="grid gap-4">
@@ -108,7 +106,7 @@ export function Login() {
         ) : (
           <>
             <CardHeader>
-              <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-marca text-marca-foreground">
                 <ShieldCheck className="size-5" />
               </div>
               <CardTitle className="text-xl">Verificação em duas etapas</CardTitle>
@@ -173,6 +171,6 @@ export function Login() {
           </>
         )}
       </Card>
-    </div>
+    </TelaDaMarca>
   )
 }

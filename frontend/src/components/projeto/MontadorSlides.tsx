@@ -71,13 +71,13 @@ function Previa({ item, projeto }: { item: ItemSlide; projeto: Projeto }) {
       <div className={cn("relative flex aspect-video flex-col overflow-hidden rounded-md border bg-white p-4 text-slate-800 shadow-sm",
         !item.incluir && "opacity-50")}>
         {item.tipo === "capa" ? (
-          <div className="flex h-full flex-col justify-center border-l-8 border-blue-700 pl-4">
+          <div className="flex h-full flex-col justify-center border-l-8 border-[#0a0a0a] pl-4 shadow-[inset_4px_0_0_var(--marca)]">
             <p className="text-xl font-bold leading-tight">{titulo}</p>
             <p className="mt-2 text-xs text-slate-500">Status · período · responsável</p>
           </div>
         ) : (
           <>
-            <div className="mb-2 h-1 w-full bg-blue-700" />
+            <div className="mb-2 h-1 w-full bg-marca" />
             <p className="text-base font-bold leading-tight">{titulo}</p>
             {item.tipo === "texto" ? (
               <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs">
@@ -139,7 +139,7 @@ function Modelos({ escolhido, aoEscolher }: { escolhido: string; aoEscolher: (v:
       <Select value={escolhido} onValueChange={aoEscolher}>
         <SelectTrigger className="w-64" aria-label="Modelo da apresentação"><SelectValue /></SelectTrigger>
         <SelectContent>
-          <SelectItem value={PADRAO_PMO}>Padrão do PMO (16:9)</SelectItem>
+          <SelectItem value={PADRAO_PMO}>Padrão do OMPY (16:9)</SelectItem>
           {(lista.data ?? []).map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.nome}</SelectItem>)}
         </SelectContent>
       </Select>
