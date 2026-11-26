@@ -224,6 +224,7 @@ python -m app.vigia --uma-vez  # uma rodada agora e sai (para testar)
 | Importação responde 503 ("fila fora do ar") | O Redis não está rodando: `brew services start redis` (ou use `FILA_SINCRONA=true` em desenvolvimento). |
 | Faz login e volta para a tela de login | Você abriu `127.0.0.1` em vez de `localhost`, ou o `CORS_ORIGENS` do `.env` não tem o endereço do front. |
 | Erro de banco depois de um `git pull` | Chegou migration nova: rode `alembic upgrade head`. |
+| Esqueci a senha e o e-mail não chega (ex.: sou o único admin) | No terminal, na raiz do projeto: `.venv/bin/python -m app.cli redefinir-senha --email seu@email` (pede a nova senha, desbloqueia a conta e derruba as sessões; some `--desligar-2fa` se também perdeu o app autenticador). |
 | Perdi o celular do 2FA | Use um código de recuperação ("Perdi o celular" na tela de login), ou peça a outro admin para redefinir o seu 2FA em **Usuários**. |
 | Quero testar sem 2FA no meu computador | No `.env`, `EXIGIR_2FA_ADMIN=false` (só em desenvolvimento). |
 
