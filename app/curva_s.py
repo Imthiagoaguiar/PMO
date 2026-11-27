@@ -118,7 +118,8 @@ def calcular(db: Session, projeto: Projeto, hoje: date) -> CurvaS:
 
     lancamentos = sorted(db.execute(
         select(LancamentoOrcamento.data, func.sum(LancamentoOrcamento.valor))
-        .where(LancamentoOrcamento.projeto_id == projeto.id).group_by(LancamentoOrcamento.data)
+        .where(LancamentoOrcamento.projeto_id == projeto.id, LancamentoOrcamento.projetado.is_(False))
+        .group_by(LancamentoOrcamento.data)
     ).all())
 
     pontos: List[PontoCurvaS] = []

@@ -120,6 +120,17 @@ export function LinhaDoTempo({ projeto, podeEditar = false }: { projeto: Projeto
   const eixo = marcas.filter((m, i) => i === 0 || i === marcas.length - 1 || (m.dia - marcas[i - 1].dia >= espacoMinimo && fim - 1 - m.dia >= espacoMinimo))
   const hoje = emDias(fmt.hojeISO())
 
+  // Semanas: toda segunda-feira do período (1/1/1970, o dia 0, foi uma quinta). Projetos longos rolam de lado
+  // para cada semana ter espaço; acima de 80 semanas, os rótulos pulam algumas (as linhas continuam todas).
+  const segundas: number[] = []
+  for (let d = inicio + ((1 - ((inicio + 4) % 7) + 7) % 7); d < fim; d += 7) segundas.push(d)
+  const passoSemana = Math.max(1, Math.ceil(segundas.length / 80))
+  const larguraMinima = Math.max(720, 236 + Math.ceil(segundas.length / passoSemana) * 44)
+  const rotuloSemana = (dia: number) => {
+    const d = new Date(dia * DIA)
+    return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}`
+  }
+
   /** Arrastar: guarda o x inicial e converte o deslocamento em dias pela largura da área. */
   function comecarArrasto(e: EventoPonteiro<HTMLButtonElement>, marco: Marco) {
     if (!podeEditar || mover.isPending) return
@@ -163,10 +174,10 @@ export function LinhaDoTempo({ projeto, podeEditar = false }: { projeto: Projeto
         </div>
       )}
       <div className="overflow-x-auto">
-        <div className="min-w-[720px]">
-          <div className="grid gap-3" style={{ gridTemplateColumns: `${ROTULO} 1fr` }}>
+        <div style={{ minWidth: larguraMinima }}>
+          <div className="grid gap-x-3 gap-y-1" style={{ gridTemplateColumns: `${ROTULO} 1fr` }}>
             <div />
-            <div className="relative h-6 border-b text-xs text-muted-foreground">
+            <div className="relative h-5 text-xs font-medium text-muted-foreground">
               {eixo.map((m, i) => (
                 <span
                   key={m.dia}
@@ -174,6 +185,14 @@ export function LinhaDoTempo({ projeto, podeEditar = false }: { projeto: Projeto
                   style={{ left: posicao(i === eixo.length - 1 ? m.dia + 1 : m.dia) }}
                 >
                   {m.rotulo}
+                </span>
+              ))}
+            </div>
+            <div className="self-end text-[11px] text-muted-foreground">Semanas (segundas-feiras)</div>
+            <div className="relative h-5 border-b text-[11px] text-muted-foreground" aria-label="Semanas">
+              {segundas.map((d, i) => (
+                <span key={d} className="absolute top-0 h-full border-l border-border pl-0.5 tabular-nums whitespace-nowrap" style={{ left: posicao(d) }}>
+                  {i % passoSemana === 0 && fim - d >= 4 ? rotuloSemana(d) : ""}
                 </span>
               ))}
             </div>
@@ -225,8 +244,11 @@ export function LinhaDoTempo({ projeto, podeEditar = false }: { projeto: Projeto
           )}
 
           <div className="relative mt-2 grid gap-1.5">
-            {/* Faixas (períodos) e linhas dos marcos atravessam as tarefas, atrás das barras. */}
+            {/* Semanas, faixas (períodos) e linhas dos marcos atravessam as tarefas, atrás das barras. */}
             <div className="pointer-events-none absolute inset-y-0 right-0" style={{ left: `calc(${ROTULO} + 0.75rem)` }}>
+              {segundas.map((d) => (
+                <div key={`semana-${d}`} className="absolute inset-y-0 border-l border-border/60" style={{ left: posicao(d) }} />
+              ))}
               {faixas.map((m) => {
                 const d0 = emDias(m.data) + deslocamento(m)
                 const d1 = emDias(m.data_fim!) + deslocamento(m) + 1

@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, Download, Eye, FileText, Lock, MoreHorizontal, Pencil, Presentation, Trash2, Loader2 } from "lucide-react"
 import { useState, type FormEvent } from "react"
-import { Link, useNavigate, useParams } from "react-router"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 import { toast } from "sonner"
 
 import { BarraProgresso, Campo, Carregando, ErroCarregar, StatusBadge } from "@/components/comum"
@@ -17,6 +17,7 @@ import { Membros } from "@/components/projeto/Membros"
 import { MontadorSlides } from "@/components/projeto/MontadorSlides"
 import { Orcamento } from "@/components/projeto/Orcamento"
 import { Pilares } from "@/components/projeto/Pilares"
+import { TrocarProjeto } from "@/components/projeto/TrocarProjeto"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -128,6 +129,7 @@ function Indicador({ titulo, valor, detalhe, destaque }: { titulo: string; valor
 export function ProjetoDetalhe() {
   const id = Number(useParams().id)
   const navigate = useNavigate()
+  const [parametrosUrl, setParametrosUrl] = useSearchParams()
   const queryClient = useQueryClient()
   const projeto = useProjeto(id)
   const indicadores = useIndicadores(id)
@@ -203,12 +205,25 @@ export function ProjetoDetalhe() {
   const encerrado = ENCERRADOS.includes(p.status)
   const podeEditarCronograma = permissoes.editar && !encerrado
   const ind = indicadores.data
+  // A aba fica na URL (?aba=orcamento): trocar de projeto pelo painel mantém a mesma aba.
+  const abas = ["cronograma", "pilares", "orcamento", "linha", "curva-s", "gargalos", ...(permissoes.gerenciar ? ["feedback"] : []),
+    "comentarios", "arquivos", "membros", "historico"]
+  const pedida = parametrosUrl.get("aba") ?? "cronograma"
+  const aba = abas.includes(pedida) ? pedida : "cronograma"
+  const mudarAba = (nova: string) => setParametrosUrl((atual) => {
+    const proximo = new URLSearchParams(atual)
+    proximo.set("aba", nova)
+    return proximo
+  }, { replace: true })
 
   return (
     <>
-      <Link to="/projetos" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="size-4" /> Projetos
-      </Link>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <Link to="/projetos" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="size-4" /> Projetos
+        </Link>
+        <TrocarProjeto atual={p.id} aba={aba} />
+      </div>
 
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
@@ -310,7 +325,7 @@ export function ProjetoDetalhe() {
         </div>
       )}
 
-      <Tabs defaultValue="cronograma">
+      <Tabs value={aba} onValueChange={mudarAba}>
         <TabsList className="mb-4 h-auto flex-wrap">
           <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
           <TabsTrigger value="pilares">Pilares</TabsTrigger>

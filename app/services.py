@@ -25,6 +25,7 @@ from app.models import (
     MAX_PILARES,
     PILARES_PADRAO,
     Fase,
+    ItemOrcamento,
     Pilar,
     PapelProjeto,
     PapelUsuario,
@@ -390,6 +391,19 @@ def _media(soma: int, total: int) -> float:
     return round(soma / total, 1) if total else 0.0
 
 
+def andamento_por_projeto(db: Session, ids: List[int]) -> Dict[int, float]:
+    """{projeto_id: % geral (média das tarefas)} de vários projetos numa consulta só (lista de projetos)."""
+    if not ids:
+        return {}
+    return {
+        projeto_id: _media(int(soma or 0), int(total))
+        for projeto_id, total, soma in db.execute(
+            select(Fase.projeto_id, func.count(Tarefa.id), func.sum(Tarefa.percentual_conclusao))
+            .join(Fase, Fase.id == Tarefa.fase_id).where(Fase.projeto_id.in_(ids)).group_by(Fase.projeto_id)
+        )
+    }
+
+
 def calcular_indicadores(db: Session, projeto: Projeto, hoje: Optional[date] = None) -> ProjetoIndicadores:
     """Indicadores do painel, calculados no banco (servem para projetos de 100 mil tarefas)."""
     hoje = hoje or tempo.hoje()
@@ -524,7 +538,8 @@ def celula_data(planilha: Any, valor: Optional[date]) -> Any:
 
 def exportar_planilha(db: Session, projeto: Projeto) -> bytes:
     """
-    Gera um .xlsx no mesmo formato aceito pela importação (dá para editar e reimportar).
+    Gera um .xlsx no mesmo formato aceito pela importação (dá para editar e reimportar). Com orçamento, as abas
+    seguintes trazem a parte financeira (resumo CAPEX/OPEX, itens, mês a mês e lançamentos).
 
     Feito para projetos grandes (100 mil tarefas): uma consulta só de colunas, lida em lotes
     (sem montar um objeto do ORM por tarefa) e a planilha no modo de escrita contínua do
@@ -554,6 +569,12 @@ def exportar_planilha(db: Session, projeto: Projeto) -> bytes:
             celula_data(planilha, inicio), celula_data(planilha, fim),
             celula_texto_seguro(planilha, responsavel), percentual, celula_texto_seguro(planilha, pilar),
         ])
+
+    # A parte financeira vem nas abas seguintes (a importação só lê a 1ª aba, o cronograma).
+    if db.scalar(select(ItemOrcamento.id).where(ItemOrcamento.projeto_id == projeto.id).limit(1)) is not None:
+        from app import orcamento  # importa services: aqui dentro evita o ciclo
+
+        orcamento.escrever_planilha(livro, db, projeto)
 
     buffer = io.BytesIO()
     livro.save(buffer)

@@ -25,8 +25,11 @@ TETO_POR_ROTA = {
     "/projetos/{id}/pilares": 9,     # + pilares e quem avaliou cada um
     # indicadores, pilares (+ financeiro do orçamento), orçamento (itens, lançamentos, curva), marcos,
     # histórico, comentários (autores e tarefas) e auditoria
-    "/projetos/{id}/relatorio": 24,
+    "/projetos/{id}/relatorio": 25,  # + meses e justificativas dos itens
     "/projetos/{id}/orcamento": 12,
+    # Excel: cronograma + abas financeiras (resumo, itens, mês a mês, lançamentos), todas fixas
+    "/projetos/{id}/exportar": 14,
+    "/projetos/{id}/orcamento/exportar": 12,
     # a apresentação junta indicadores, pilares, orçamento, gargalos, marcos e atrasadas
     "/projetos/{id}/apresentacao": 30,  # + Curva S
     "/projetos/{id}/curva-s": 10,  # tarefas, sem datas, orçado, histórico (2), lançamentos: fixas  # itens, lançamentos por item e por dia, indicadores do cronograma

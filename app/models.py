@@ -498,7 +498,11 @@ class MarcoLinhaTempo(Base):
 
 
 class ItemOrcamento(Base):
-    """Linha do orçamento (ex.: "Licenças do ERP"): o valor orçado. O realizado vem dos lançamentos."""
+    """
+    Linha do orçamento (ex.: "Licenças do ERP"): o valor orçado. O realizado vem dos lançamentos.
+    Com valores por mês (`meses`), o orçado é a soma deles e o planejado mês a mês segue essa distribuição;
+    sem meses, o orçado é distribuído por igual entre o início e o fim do cronograma.
+    """
 
     __tablename__ = "itens_orcamento"
 
@@ -523,12 +527,40 @@ class ItemOrcamento(Base):
     lancamentos: Mapped[List["LancamentoOrcamento"]] = relationship(
         back_populates="item", cascade="all, delete-orphan", order_by="(LancamentoOrcamento.data, LancamentoOrcamento.id)"
     )
+    meses: Mapped[List["OrcamentoMensal"]] = relationship(
+        back_populates="item", cascade="all, delete-orphan", order_by="OrcamentoMensal.mes"
+    )
 
     __table_args__ = (CheckConstraint("valor_orcado >= 0", name="ck_item_orcado_positivo"),)
 
 
+class OrcamentoMensal(Base):
+    """Quanto do item está orçado para um mês (`mes` é sempre o dia 1). O orçado do item é a soma dos meses."""
+
+    __tablename__ = "orcamento_mensal"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("itens_orcamento.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    mes: Mapped[date] = mapped_column(Date, nullable=False)
+    valor: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+
+    item: Mapped["ItemOrcamento"] = relationship(back_populates="meses")
+
+    __table_args__ = (
+        UniqueConstraint("item_id", "mes", name="uq_orcamento_mensal_item_mes"),
+        CheckConstraint("valor >= 0", name="ck_orcamento_mensal_positivo"),
+    )
+
+
 class LancamentoOrcamento(Base):
-    """Gasto realizado (ou estorno, com valor negativo) numa data, contra um item do orçamento."""
+    """
+    Gasto realizado (ou estorno, com valor negativo) numa data, contra um item do orçamento.
+    `projetado`: gasto FUTURO previsto. Não entra no realizado; entra na previsão final (realizado + projetado).
+    Quando acontece, é confirmado e vira realizado.
+    `justificativa`: obrigatória quando o gasto deixa o item acima do orçado (por que está estourando).
+    """
 
     __tablename__ = "lancamentos_orcamento"
 
@@ -543,6 +575,8 @@ class LancamentoOrcamento(Base):
     descricao: Mapped[str] = mapped_column(String(200), nullable=False)
     documento: Mapped[Optional[str]] = mapped_column(String(60))  # NF, pedido de compra...
     valor: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    projetado: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    justificativa: Mapped[Optional[str]] = mapped_column(Text)
     criado_por_id: Mapped[Optional[int]] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"))
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

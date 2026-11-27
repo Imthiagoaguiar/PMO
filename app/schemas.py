@@ -419,24 +419,35 @@ class MarcoRead(BaseModel):
 ValorMonetario = Annotated[Decimal, Field(max_digits=14, decimal_places=2)]
 
 
+MAX_MESES_ITEM = 120
+Justificativa = Annotated[Optional[str], Field(None, max_length=1000, description="Por que o gasto está estourando o item")]
+
+
+class MesOrcamento(BaseModel):
+    """Valor orçado de um item num mês."""
+
+    mes: str = Field(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="AAAA-MM", examples=["2026-03"])
+    valor: ValorMonetario = Field(..., ge=0)
+
+    @field_validator("mes")
+    @classmethod
+    def _ano_valido(cls, v: str) -> str:
+        if not 2000 <= int(v[:4]) <= 2100:
+            raise ValueError("ano fora do intervalo aceito (2000 a 2100)")
+        return v
+
+
+def _meses_sem_repetir(meses: Optional[List[MesOrcamento]]) -> None:
+    if meses and len({m.mes for m in meses}) != len(meses):
+        raise ValueError("cada mês só pode aparecer uma vez no item")
+
+
 class ItemOrcamentoCreate(BaseModel):
     descricao: str = Field(..., min_length=1, max_length=150)
     categoria: CategoriaOrcamento = CategoriaOrcamento.OPEX
     pilar_id: Optional[IdBanco] = Field(None, description="Pilar deste projeto (o financeiro do pilar passa a vir daqui)")
-    valor_orcado: ValorMonetario = Field(..., ge=0)
-
-    @field_validator("descricao", mode="before")
-    @classmethod
-    def _limpar_texto(cls, v: Any) -> Any:
-        return _strip_ou_none(v)
-
-
-class ItemOrcamentoUpdate(BaseModel):
-    descricao: Optional[str] = Field(None, min_length=1, max_length=150)
-    categoria: Optional[CategoriaOrcamento] = None
-    pilar_id: Optional[IdBanco] = Field(None, description="null tira o item do pilar")
-    valor_orcado: Optional[ValorMonetario] = Field(None, ge=0)
-    versao: Optional[int] = Field(None, ge=1, le=ID_MAXIMO, description="Bloqueio otimista (409 se alguém salvou antes)")
+    valor_orcado: Optional[ValorMonetario] = Field(None, ge=0, description="Total. Com `meses`, é a soma deles (este campo é ignorado)")
+    meses: Optional[List[MesOrcamento]] = Field(None, max_length=MAX_MESES_ITEM, description="Orçado mês a mês")
 
     @field_validator("descricao", mode="before")
     @classmethod
@@ -444,8 +455,36 @@ class ItemOrcamentoUpdate(BaseModel):
         return _strip_ou_none(v)
 
     @model_validator(mode="after")
+    def _valor_ou_meses(self) -> "ItemOrcamentoCreate":
+        _meses_sem_repetir(self.meses)
+        if self.valor_orcado is None and not self.meses:
+            raise ValueError("informe o valor orçado ou os valores por mês")
+        return self
+
+
+class ItemOrcamentoUpdate(BaseModel):
+    descricao: Optional[str] = Field(None, min_length=1, max_length=150)
+    categoria: Optional[CategoriaOrcamento] = None
+    pilar_id: Optional[IdBanco] = Field(None, description="null tira o item do pilar")
+    valor_orcado: Optional[ValorMonetario] = Field(None, ge=0, description="Ignorado quando o item tem valores por mês")
+    meses: Optional[List[MesOrcamento]] = Field(
+        None, max_length=MAX_MESES_ITEM, description="Orçado mês a mês; [] volta ao valor total único (o atual)",
+    )
+    valor_realizado: Optional[ValorMonetario] = Field(
+        None, ge=0, description="Novo valor GASTO do item: o sistema lança um ajuste com a diferença (fica no histórico)",
+    )
+    justificativa: Justificativa
+    versao: Optional[int] = Field(None, ge=1, le=ID_MAXIMO, description="Bloqueio otimista (409 se alguém salvou antes)")
+
+    @field_validator("descricao", "justificativa", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+    @model_validator(mode="after")
     def _obrigatorios(self) -> "ItemOrcamentoUpdate":
-        _proibir_nulos(self, ("descricao", "categoria", "valor_orcado"))
+        _proibir_nulos(self, ("descricao", "categoria", "valor_orcado", "meses", "valor_realizado"))
+        _meses_sem_repetir(self.meses)
         return self
 
 
@@ -455,8 +494,10 @@ class LancamentoCreate(BaseModel):
     descricao: str = Field(..., min_length=1, max_length=200)
     documento: Optional[str] = Field(None, max_length=60, description="Nota fiscal, pedido de compra...")
     valor: ValorMonetario = Field(..., description="Gasto (positivo) ou estorno (negativo); zero não")
+    projetado: bool = Field(False, description="Gasto futuro previsto: fica fora do realizado e entra na previsão final")
+    justificativa: Justificativa
 
-    @field_validator("descricao", "documento", mode="before")
+    @field_validator("descricao", "documento", "justificativa", mode="before")
     @classmethod
     def _limpar_texto(cls, v: Any) -> Any:
         return _strip_ou_none(v)
@@ -475,8 +516,9 @@ class LancamentoUpdate(BaseModel):
     descricao: Optional[str] = Field(None, min_length=1, max_length=200)
     documento: Optional[str] = Field(None, max_length=60)
     valor: Optional[ValorMonetario] = None
+    justificativa: Justificativa
 
-    @field_validator("descricao", "documento", mode="before")
+    @field_validator("descricao", "documento", "justificativa", mode="before")
     @classmethod
     def _limpar_texto(cls, v: Any) -> Any:
         return _strip_ou_none(v)
@@ -498,8 +540,30 @@ class LancamentoRead(BaseModel):
     descricao: str
     documento: Optional[str]
     valor: Decimal
+    projetado: bool
+    justificativa: Optional[str]
     criado_por: Optional["UsuarioResumo"] = None
     criado_em: InstanteUTC
+
+
+class ConfirmarProjetado(BaseModel):
+    """O gasto projetado aconteceu: vira realizado (com a data e o valor reais)."""
+
+    data: Optional[DataProjeto] = Field(None, description="Quando aconteceu (padrão: hoje)")
+    valor: Optional[ValorMonetario] = Field(None, description="Valor real, se diferente do projetado")
+    justificativa: Justificativa
+
+    @field_validator("justificativa", mode="before")
+    @classmethod
+    def _limpar_texto(cls, v: Any) -> Any:
+        return _strip_ou_none(v)
+
+    @field_validator("valor")
+    @classmethod
+    def _nao_zero(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        if v == 0:
+            raise ValueError("o valor não pode ser zero")
+        return v
 
 
 class ItemOrcamentoRead(BaseModel):
@@ -510,10 +574,14 @@ class ItemOrcamentoRead(BaseModel):
     pilar_nome: Optional[str]
     valor_orcado: Decimal
     valor_realizado: Decimal
+    valor_projetado: Decimal = Field(..., description="Soma dos lançamentos projetados (futuros)")
+    previsao: Decimal = Field(..., description="Realizado + projetado")
     saldo: Decimal = Field(..., description="Orçado - realizado (negativo = estourou)")
     execucao: Optional[float] = Field(None, description="Realizado / orçado, em %")
     estourado: bool
-    lancamentos: int = Field(..., description="Quantos lançamentos o item tem")
+    justificativa: Optional[str] = Field(None, description="A justificativa de estouro mais recente do item")
+    meses: List[MesOrcamento] = Field(default_factory=list, description="Orçado mês a mês (vazio = valor total único)")
+    lancamentos: int = Field(..., description="Quantos lançamentos (realizados e projetados) o item tem")
     versao: int
 
 
@@ -522,13 +590,19 @@ class TotalOrcamento(BaseModel):
     nome: str
     orcado: Decimal
     realizado: Decimal
+    projetado: Decimal = Decimal("0")
 
 
 class PontoCurva(BaseModel):
     mes: str = Field(..., description="AAAA-MM")
     realizado_no_mes: Decimal
     realizado_acumulado: Decimal
-    planejado_acumulado: Optional[Decimal] = Field(None, description="Orçado distribuído por igual no período do projeto")
+    planejado_no_mes: Optional[Decimal] = Field(None, description="Orçado previsto para o mês")
+    planejado_acumulado: Optional[Decimal] = Field(
+        None, description="Orçado acumulado: os valores por mês dos itens; itens sem meses, distribuídos por igual no período",
+    )
+    projetado_no_mes: Decimal = Decimal("0")
+    previsto_acumulado: Optional[Decimal] = Field(None, description="Realizado + projetado acumulados (só com projetados)")
 
 
 class AlertaOrcamento(BaseModel):
@@ -540,11 +614,13 @@ class ResumoOrcamento(BaseModel):
     orcamento_aprovado: Optional[Decimal] = Field(None, description="O valor aprovado do projeto (cadastro)")
     total_orcado: Decimal = Field(..., description="Soma dos itens")
     total_realizado: Decimal
+    total_projetado: Decimal = Field(..., description="Gastos futuros previstos (lançamentos projetados)")
     saldo: Decimal
     execucao: Optional[float] = Field(None, description="Realizado / orçado, em %")
     avanco_fisico: float = Field(..., description="% concluído do cronograma")
-    previsao_final: Optional[Decimal] = Field(
-        None, description="Custo previsto ao final no ritmo atual: realizado / avanço físico (EAC). Só a partir de 10% de avanço",
+    previsao_final: Decimal = Field(..., description="Custo previsto ao final: realizado + projetado")
+    previsao_ritmo: Optional[Decimal] = Field(
+        None, description="Referência: custo ao final no ritmo atual, realizado / avanço físico (EAC). Só a partir de 10% de avanço",
     )
     itens: List[ItemOrcamentoRead]
     por_categoria: List[TotalOrcamento]
@@ -764,6 +840,7 @@ class ProjetoResumo(BaseModel):
     dono_id: int
     seguir_ordem_fases: bool = True
     versao: int = Field(..., description="Envie de volta no PATCH (bloqueio otimista)")
+    percentual_conclusao: Optional[float] = Field(None, description="Andamento geral (só na listagem de projetos)")
 
 
 class PermissoesProjeto(BaseModel):

@@ -33,5 +33,7 @@ with SessionLocal() as db:
     projeto.membros += [ProjetoMembro(usuario=eva, papel=PapelProjeto.EDITOR),
                         ProjetoMembro(usuario=lia, papel=PapelProjeto.VISUALIZADOR)]
     projeto.fases[0].tarefas += [Tarefa(descricao="Termo de Abertura"), Tarefa(descricao="Tarefa de concorrência")]
+    # Segundo projeto do Gil: para trocar de projeto pelo painel lateral.
+    services.criar_projeto_com_fases(db, gil, "Expansão da Filial")
     db.commit()
-print("E2E: banco semeado (Gil gerente, Eva editora, Lia leitora; projeto Implantação ERP)")
+print("E2E: banco semeado (Gil gerente, Eva editora, Lia leitora; projetos Implantação ERP e Expansão da Filial)")

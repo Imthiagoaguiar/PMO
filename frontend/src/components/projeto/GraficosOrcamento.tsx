@@ -39,15 +39,20 @@ function useLargura<T extends HTMLElement>() {
   return [ref, largura] as const
 }
 
-function Legenda({ planejado }: { planejado: boolean }) {
+function Legenda({ planejado, previsto }: { planejado: boolean; previsto: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
       <span className="flex items-center gap-1.5">
         <span className="h-0.5 w-4 rounded" style={{ background: COR_REALIZADO }} /> Realizado
       </span>
+      {previsto && (
+        <span className="flex items-center gap-1.5">
+          <span className="w-4 border-t-2 border-dotted" style={{ borderColor: COR_REALIZADO }} /> Previsto (realizado + projetado)
+        </span>
+      )}
       {planejado && (
         <span className="flex items-center gap-1.5">
-          <span className="w-4 border-t-2 border-dashed" style={{ borderColor: COR_PLANEJADO }} /> Planejado (orçado distribuído no período)
+          <span className="w-4 border-t-2 border-dashed" style={{ borderColor: COR_PLANEJADO }} /> Planejado (orçado mês a mês)
         </span>
       )}
     </div>
@@ -63,9 +68,12 @@ export function CurvaAcumulada({ curva }: { curva: PontoCurva[] }) {
   const comPlano = curva.some((p) => p.planejado_acumulado !== null)
   const real = curva.map((p) => Number(p.realizado_acumulado))
   const plano = curva.map((p) => (p.planejado_acumulado === null ? null : Number(p.planejado_acumulado)))
+  const previsto = curva.map((p) => (p.previsto_acumulado === null ? null : Number(p.previsto_acumulado)))
+  const comPrevisto = previsto.some((v) => v !== null)
+  const todos = [...real, ...plano.map((v) => v ?? 0), ...previsto.map((v) => v ?? 0)]
   // Eixo com passo "redondo" (10 mil, 25 mil, 50 mil...) e 3 a 5 divisões.
-  const passoEixo = teto(Math.max(...real, ...plano.map((v) => v ?? 0)) / 4)
-  const maximo = Math.max(passoEixo * Math.ceil(Math.max(...real, ...plano.map((v) => v ?? 0), 1) / passoEixo), passoEixo)
+  const passoEixo = teto(Math.max(...todos) / 4)
+  const maximo = Math.max(passoEixo * Math.ceil(Math.max(...todos, 1) / passoEixo), passoEixo)
   const w = Math.max(largura - margem.esq - margem.dir, 10)
   const h = altura - margem.topo - margem.base
   const x = (i: number) => margem.esq + (curva.length === 1 ? w / 2 : (i / (curva.length - 1)) * w)
@@ -84,10 +92,10 @@ export function CurvaAcumulada({ curva }: { curva: PontoCurva[] }) {
   const ponto = foco !== null ? curva[foco] : null
   return (
     <div className="grid gap-2">
-      <Legenda planejado={comPlano} />
+      <Legenda planejado={comPlano} previsto={comPrevisto} />
       <div ref={ref} className="relative">
         {largura > 0 && (
-          <svg width={largura} height={altura} role="img" aria-label="Gráfico: realizado acumulado e planejado acumulado por mês">
+          <svg width={largura} height={altura} role="img" aria-label="Gráfico: realizado, previsto e planejado acumulados por mês">
             {ticks.map((t) => (
               <g key={t}>
                 <line x1={margem.esq} x2={margem.esq + w} y1={y(t)} y2={y(t)} stroke="var(--border)" strokeWidth={1} />
@@ -104,6 +112,9 @@ export function CurvaAcumulada({ curva }: { curva: PontoCurva[] }) {
             ))}
             {comPlano && (
               <path d={caminho(plano)} fill="none" stroke={COR_PLANEJADO} strokeWidth={2} strokeDasharray="6 4" strokeLinejoin="round" />
+            )}
+            {comPrevisto && (
+              <path d={caminho(previsto)} fill="none" stroke={COR_REALIZADO} strokeWidth={2} strokeDasharray="1.5 4" strokeLinecap="round" />
             )}
             <path d={caminho(real)} fill="none" stroke={COR_REALIZADO} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
             {foco !== null && (
@@ -129,7 +140,16 @@ export function CurvaAcumulada({ curva }: { curva: PontoCurva[] }) {
             {ponto.planejado_acumulado !== null && (
               <p className="flex justify-between gap-3"><span>Planejado acumulado</span><span className="tabular-nums">{fmt.moeda(ponto.planejado_acumulado)}</span></p>
             )}
+            {ponto.previsto_acumulado !== null && (
+              <p className="flex justify-between gap-3"><span>Previsto acumulado</span><span className="tabular-nums">{fmt.moeda(ponto.previsto_acumulado)}</span></p>
+            )}
             <p className="flex justify-between gap-3 text-muted-foreground"><span>Gasto no mês</span><span className="tabular-nums">{fmt.moeda(ponto.realizado_no_mes)}</span></p>
+            {ponto.planejado_no_mes !== null && (
+              <p className="flex justify-between gap-3 text-muted-foreground"><span>Orçado para o mês</span><span className="tabular-nums">{fmt.moeda(ponto.planejado_no_mes)}</span></p>
+            )}
+            {Number(ponto.projetado_no_mes) !== 0 && (
+              <p className="flex justify-between gap-3 text-muted-foreground"><span>Projetado no mês</span><span className="tabular-nums">{fmt.moeda(ponto.projetado_no_mes)}</span></p>
+            )}
           </div>
         )}
       </div>

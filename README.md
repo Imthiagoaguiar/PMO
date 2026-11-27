@@ -15,14 +15,24 @@ Os nomes técnicos continuam `pmo` (pasta, pacote do front, serviços `com.pmo.*
   o avanço que quebraria a regra, recusa ciclos e empurra as datas das sucessoras (dias úteis, em cascata).
 - Login próprio (JWT + refresh token em cookie httpOnly) ou Clerk; papéis admin/gerente/membro e, em cada projeto, editor ou visualizador (vê, exporta e comenta).
 - Importação de planilhas de até 100 mil linhas em segundo plano (fila Redis + RQ), com progresso ao vivo.
-- Auditoria, limite de requisições, exportação para Excel, cálculo de prazos em dias úteis (Brasil API) e e-mails de projeto criado e de redefinição de senha (Resend).
+- Auditoria, limite de requisições, exportação para Excel (cronograma + abas financeiras: resumo CAPEX/OPEX, itens,
+  mês a mês, orçado por mês e lançamentos), cálculo de prazos em dias úteis (Brasil API) e e-mails de projeto criado e de redefinição de senha (Resend).
 - **Pilares** (TI, Suprimentos, CAPEX, Pessoas... e outros criados pelo editor): cada tarefa pode pertencer a um pilar;
   o andamento do pilar vem das tarefas, com farol (verde/amarelo/vermelho), texto de situação e orçado x realizado.
 - **Linha do tempo com marcos**: pins, bandeiras, formas geométricas e períodos (ex.: pré-entrega, go-live,
-  congelamento), com cor e descrição; o editor arrasta o marco para mudar a data.
-- **Orçamento**: itens (orçado, CAPEX/OPEX, pilar) e lançamentos (realizado, com data, documento e estorno); saldo,
-  execução, previsão de fechamento no ritmo atual, alertas de estouro, gráficos (curva acumulada x planejado e orçado x
-  realizado por item, categoria ou pilar) e exportação para Excel. Pilar com itens passa a usar esse financeiro.
+  congelamento), com cor e descrição; o editor arrasta o marco para mudar a data. Eixo com meses e **semanas**
+  (toda segunda-feira, com as linhas atravessando o gráfico); projetos longos rolam de lado.
+- **Orçamento**: itens (CAPEX/OPEX, pilar) com o orçado **total ou mês a mês** (cada item nos meses em que vai gastar)
+  e lançamentos **realizados** (com data, documento e estorno) e **projetados** (gastos futuros, numa lista própria:
+  não entram no realizado, somam na **previsão final = realizado + projetado** e são confirmados quando acontecem).
+  - Gasto que deixa o item acima do orçado exige a **justificativa** ("por que está estourando?"), que aparece no
+    item, nos alertas, no histórico e no Excel.
+  - No lápis do item dá para corrigir o **valor gasto**: o sistema lança um ajuste com a diferença (fica no histórico).
+  - Quadro **CAPEX x OPEX** (orçado, realizado, projetado, previsão e saldo), alertas, gráficos (curva acumulada com
+    planejado mês a mês e previsto; orçado x realizado por item, categoria ou pilar) e exportação para Excel.
+  - Pilar com itens passa a usar esse financeiro.
+- **Trocar de projeto** pelo painel lateral (busca, status e andamento de cada um), sem voltar à lista: o outro
+  projeto abre na mesma aba (a aba fica no endereço, ex.: `?aba=orcamento`).
 - **Andamento por botões** (0, 25, 50, 75 e 100%, com campo manual para outro valor) no diálogo da tarefa e direto
   na linha do cronograma, clicando na barra.
 - **Anexos nas tarefas** (até 25 MB cada, 2 GB por projeto; programas e scripts recusados) e a aba **Arquivos** com o
@@ -39,7 +49,7 @@ Os nomes técnicos continuam `pmo` (pasta, pacote do front, serviços `com.pmo.*
   marcos e bandeiras, marcos, pilares, orçamento, gargalos, pontos de atenção), a ordem e os títulos, escreva notas do
   apresentador e slides de texto próprios. Gráficos nativos (editáveis no PowerPoint). O admin pode enviar o **modelo
   da empresa** (.pptx ou .potx, sem macros, até 20 MB): a apresentação sai com o tema, as cores, as fontes e o tamanho
-  de slide dele (16:9 ou 4:3).
+  de slide dele (16:9 ou 4:3). O slide de orçamento traz realizado, projetado, previsão final e CAPEX x OPEX.
 - **Lembrete por e-mail** para quem tem tarefa atrasada: um e-mail por pessoa com todas as atrasadas, a cada 4 h,
   só em dias úteis das 8h às 18h. Cada pessoa pode silenciar por 24 h no menu do seu nome.
 - **Relatório em PDF** do projeto: resumo e indicadores, pilares, orçamento, linha do tempo (Gantt com marcos),

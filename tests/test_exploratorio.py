@@ -100,7 +100,7 @@ def test_previsao_nao_explode_com_cronograma_quase_parado(client, c):
     item = _item(client, c, "100000.00")
     _lanc(client, c, item, "5000.00", "2026-02-01")
     r = client.get(f"/projetos/{c['id']}/orcamento", headers=c["h"]).json()
-    assert r["previsao_final"] is None
+    assert r["previsao_ritmo"] is None and Decimal(r["previsao_final"]) == Decimal("5000.00")
     assert not any("deve fechar" in a["mensagem"] for a in r["alertas"])
 
 

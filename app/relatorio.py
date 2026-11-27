@@ -382,7 +382,7 @@ def _orcamento(d: DadosRelatorio) -> List[Any]:
     itens: List[Any] = [_secao("Orçamento")]
     cartoes = [
         ("Aprovado", _moeda(o.orcamento_aprovado)), ("Orçado (itens)", _moeda(o.total_orcado)),
-        ("Realizado", _moeda(o.total_realizado)), ("Saldo", _moeda(o.saldo)),
+        ("Realizado", _moeda(o.total_realizado)), ("Projetado", _moeda(o.total_projetado)), ("Saldo", _moeda(o.saldo)),
         ("Execução", f"{o.execucao:.0f}%" if o.execucao is not None else "—"),
         ("Previsão ao final", _moeda(o.previsao_final)),
     ]

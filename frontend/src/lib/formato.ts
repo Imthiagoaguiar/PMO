@@ -3,6 +3,13 @@ import { toast } from "sonner"
 import { ApiError } from "@/lib/api"
 
 /** "2026-04-17" -> "17/04/2026", sem passar por Date (evita o fuso deslocar o dia). */
+const NOMES_MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+
+/** "2026-03" -> "mar/2026". */
+export function mesAno(mes: string): string {
+  return `${NOMES_MES[Number(mes.slice(5, 7)) - 1]}/${mes.slice(0, 4)}`
+}
+
 export function data(iso: string | null | undefined): string {
   if (!iso) return "—"
   const [ano, mes, dia] = iso.slice(0, 10).split("-")

@@ -352,21 +352,28 @@ def _orcamento(m: "Montagem", d: DadosApresentacao, titulo: Optional[str]) -> Op
     if not o.itens:
         return None
     s = m.novo(titulo or "Orçamento")
-    largura = (LARGURA - 2 * MARGEM - Inches(0.6)) // 4
+    largura = (LARGURA - 2 * MARGEM - Inches(0.8)) // 5
     cartoes = [("Orçado (itens)", _moeda(o.total_orcado), False), ("Realizado", _moeda(o.total_realizado), False),
-               ("Saldo", _moeda(o.saldo), o.saldo < 0),
-               ("Previsão ao final", _moeda(o.previsao_final),
-                bool(o.previsao_final and o.previsao_final > o.total_orcado * Decimal("1.05")))]
+               ("Projetado (futuro)", _moeda(o.total_projetado), False),
+               ("Previsão final", _moeda(o.previsao_final), o.total_orcado > 0 and o.previsao_final > o.total_orcado),
+               ("Saldo", _moeda(o.saldo), o.saldo < 0)]
     for i, (rotulo, valor, destaque) in enumerate(cartoes):
         _cartao(s, MARGEM + i * (largura + Inches(0.2)), Inches(1.2), largura, rotulo, valor, destaque)
     itens = sorted(o.itens, key=lambda i: -i.valor_orcado)[:10]
-    _grafico_barras(s, MARGEM, Inches(2.6), Inches(7.6), Inches(4.3), [_limpo(i.descricao, 35) for i in itens], [
-        ("Orçado", [float(i.valor_orcado) for i in itens], SERIE_PLANEJADO),
-        ("Realizado", [float(i.valor_realizado) for i in itens], SERIE_REALIZADO),
-    ], formato='"R$" #,##0')
-    alertas = [a.mensagem for a in o.alertas][:5] or ["Nenhum alerta: execução dentro do orçado."]
-    _texto(s, MARGEM + Inches(7.9), Inches(2.6), Inches(4.2), Inches(0.4), "Alertas", 14, True)
-    _texto(s, MARGEM + Inches(7.9), Inches(3.05), Inches(4.2), Inches(3.8), "\n".join(f"• {_limpo(a, 160)}" for a in alertas), 11)
+    series = [("Orçado", [float(i.valor_orcado) for i in itens], SERIE_PLANEJADO),
+              ("Realizado", [float(i.valor_realizado) for i in itens], SERIE_REALIZADO)]
+    if o.total_projetado:
+        series.append(("Previsão (realizado + projetado)", [float(i.previsao) for i in itens], FRACO))
+    _grafico_barras(s, MARGEM, Inches(2.6), Inches(7.6), Inches(4.3), [_limpo(i.descricao, 35) for i in itens], series,
+                    formato='"R$" #,##0')
+    categorias = [f"{c.nome}: realizado {_moeda(c.realizado)} + projetado {_moeda(c.projetado)} = "
+                  f"{_moeda(c.realizado + c.projetado)} de {_moeda(c.orcado)}"
+                  for c in o.por_categoria if c.orcado or c.realizado or c.projetado]
+    _texto(s, MARGEM + Inches(7.9), Inches(2.6), Inches(4.2), Inches(0.4), "CAPEX x OPEX", 14, True)
+    _texto(s, MARGEM + Inches(7.9), Inches(3.0), Inches(4.2), Inches(1.1), "\n".join(categorias), 10)
+    alertas = [a.mensagem for a in o.alertas][:4] or ["Nenhum alerta: execução dentro do orçado."]
+    _texto(s, MARGEM + Inches(7.9), Inches(4.2), Inches(4.2), Inches(0.4), "Alertas", 14, True)
+    _texto(s, MARGEM + Inches(7.9), Inches(4.6), Inches(4.2), Inches(2.3), "\n".join(f"• {_limpo(a, 140)}" for a in alertas), 10)
     return s
 
 

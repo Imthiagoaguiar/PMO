@@ -193,10 +193,15 @@ def test_alertas(client, c):
     # 60 mil gastos com 20% feito: no ritmo atual fecha em 300 mil.
     assert any("deve fechar em R$ 300.000,00" in a for a in alertas)
     assert any("Gasto adiantado" in a for a in alertas)
-    _lanc(client, c, item, "70000.00", "2026-03-01")
+    sem_motivo = _lanc(client, c, item, "70000.00", "2026-03-01")  # estoura o item: precisa dizer por quê
+    assert sem_motivo.status_code == 422 and "Explique por que está estourando" in sem_motivo.json()["detail"]
+    assert _lanc(client, c, item, "70000.00", "2026-03-01", justificativa="Fundação extra").status_code == 201
     alertas = [a["mensagem"] for a in _resumo(client, c)["alertas"]]
-    assert any("“Obra” estourou" in a for a in alertas) and any("já passou do orçado" in a for a in alertas)
-    assert Decimal(_resumo(client, c)["previsao_final"]) == Decimal("650000.00")
+    assert any("“Obra” estourou" in a and "Justificativa: “Fundação extra”" in a for a in alertas)
+    assert any("já passou do orçado" in a for a in alertas)
+    r = _resumo(client, c)
+    assert Decimal(r["previsao_ritmo"]) == Decimal("650000.00")  # referência: no ritmo atual
+    assert Decimal(r["previsao_final"]) == Decimal("130000.00")  # realizado + projetado (nenhum projetado)
 
 
 def test_editar_e_excluir(client, c):
@@ -273,17 +278,18 @@ def test_exportar_orcamento(client, c):
     r = client.get(f"/projetos/{c['id']}/orcamento/exportar", headers=c["h"]["leitor"])
     assert r.status_code == 200
     livro = openpyxl.load_workbook(io.BytesIO(r.content))
-    itens = list(livro["Itens"].iter_rows(values_only=True))
-    assert itens[1][0] == "=SOMA(A1)" and livro["Itens"]["A2"].data_type == "s"  # texto, não fórmula
+    itens = list(livro["Itens do orçamento"].iter_rows(values_only=True))
+    assert itens[1][0] == "=SOMA(A1)" and livro["Itens do orçamento"]["A2"].data_type == "s"  # texto, não fórmula
     assert itens[1][3] == 1000 and itens[1][4] == 250
     lancs = list(livro["Lançamentos"].iter_rows(values_only=True))
-    assert lancs[1][2] == "+cmd|calc" and lancs[1][4] == 250
+    assert lancs[1][1] == "Realizado" and lancs[1][4] == "+cmd|calc" and lancs[1][6] == 250
+    assert "Resumo do orçamento" in livro.sheetnames
 
 
 def test_orcamento_no_pdf(client, c):
     item = _item(client, c, "Licenças", "40000.00")
-    _lanc(client, c, item, "45000.00", "2026-01-10")
-    _lanc(client, c, item, "1000.00", "2026-02-10")
+    _lanc(client, c, item, "45000.00", "2026-01-10", justificativa="Reajuste do fornecedor")
+    _lanc(client, c, item, "1000.00", "2026-02-10", justificativa="Reajuste do fornecedor")
     r = client.get(f"/projetos/{c['id']}/relatorio", headers=c["h"]["leitor"])
     texto = " ".join(" ".join(p.extract_text() for p in PdfReader(io.BytesIO(r.content)).pages).split())
     assert "Orçamento" in texto and "Previsão ao final" in texto and "estourou" in texto

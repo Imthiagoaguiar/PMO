@@ -59,6 +59,7 @@ CORPOS = {  # corpos válidos: o 404 tem de vir da AUTORIZAÇÃO, não de um 422
     ("POST", "/projetos/{projeto_id}/orcamento/lancamentos"): lambda c: {
         "item_id": c["item_id"], "valor": "1.00", "data": "2026-01-01", "descricao": "invasão"},
     ("PATCH", "/projetos/{projeto_id}/orcamento/lancamentos/{lancamento_id}"): {"valor": "999999.00"},
+    ("POST", "/projetos/{projeto_id}/orcamento/lancamentos/{lancamento_id}/confirmar"): {},
     ("POST", "/projetos/{projeto_id}/tarefas/{tarefa_id}/anexos"): {"__arquivo__": ("invasao.txt", b"invasao")},
     ("POST", "/projetos/{projeto_id}/feedback/ia"): {"tipo": "pessoa", "chave": "x"},
     ("POST", "/projetos/{projeto_id}/apresentacao"): {"slides": [{"tipo": "capa"}]},

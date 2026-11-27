@@ -336,7 +336,11 @@ def listar_projetos(
         query = query.where(Projeto.status == status_projeto)
     if busca and busca.strip():
         query = query.where(Projeto.nome_projeto.ilike(f"%{escapar_like(busca.strip())}%", escape="\\"))
-    return paginar(db, query.order_by(Projeto.id.desc()), pagina)
+    resultado = paginar(db, query.order_by(Projeto.id.desc()), pagina)
+    andamento = services.andamento_por_projeto(db, [p.id for p in resultado["itens"]])
+    resultado["itens"] = [ProjetoResumo.model_validate(p).model_copy(update={"percentual_conclusao": andamento.get(p.id, 0.0)})
+                          for p in resultado["itens"]]
+    return resultado
 
 
 @router.get("/{projeto_id}", response_model=ProjetoRead)

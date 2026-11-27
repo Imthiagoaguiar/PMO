@@ -67,11 +67,17 @@ test("fases editáveis, dependência que bloqueia, marco na linha do tempo e or�
     await page.getByLabel("Descrição").fill(`NF ${data}`)
     await page.getByLabel("Data", { exact: true }).fill(data)
     await page.getByLabel("Valor (R$)").fill(valor)
+    if (valor === "30000") {
+      // 45 mil de 40 mil orçados: estoura o item, e a justificativa vira obrigatória.
+      await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled()
+      await page.getByLabel("Por que está estourando? (obrigatório)").fill("Licenças extras para a filial")
+    }
     await page.getByRole("button", { name: "Salvar" }).click()
     await expect(aviso(page, "Gasto lançado").first()).toBeVisible()
   }
   await expect(page.getByText("já passou do orçado")).toBeVisible()
-  await expect(page.getByRole("img", { name: /realizado acumulado/ })).toBeVisible()
+  await expect(page.getByText("Por quê: Licenças extras para a filial")).toBeVisible()
+  await expect(page.getByRole("img", { name: /acumulados por mês/ })).toBeVisible()
   await expect(page.getByText("Estourou", { exact: true })).toBeVisible()
   if (FOTOS) await page.screenshot({ path: `${FOTOS}/orcamento.png`, fullPage: true })
 

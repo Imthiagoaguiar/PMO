@@ -84,6 +84,8 @@ export interface ProjetoResumo {
   seguir_ordem_fases: boolean
   /** Bloqueio otimista: enviar de volta no PATCH (409 se outra pessoa salvou antes). */
   versao: number
+  /** Andamento geral: só vem na listagem de projetos. */
+  percentual_conclusao?: number | null
 }
 
 export interface Permissoes {
@@ -280,11 +282,21 @@ export interface ItemOrcamento {
   pilar_nome: string | null
   valor_orcado: string
   valor_realizado: string
+  valor_projetado: string
+  previsao: string
   saldo: string
   execucao: number | null
   estourado: boolean
+  justificativa: string | null
+  meses: MesOrcamento[]
   lancamentos: number
   versao: number
+}
+
+/** Orçado de um item num mês ("AAAA-MM"). */
+export interface MesOrcamento {
+  mes: string
+  valor: string
 }
 
 export interface Lancamento {
@@ -294,6 +306,8 @@ export interface Lancamento {
   descricao: string
   documento: string | null
   valor: string
+  projetado: boolean
+  justificativa: string | null
   criado_por: UsuarioResumo | null
   criado_em: string
 }
@@ -303,23 +317,29 @@ export interface TotalOrcamento {
   nome: string
   orcado: string
   realizado: string
+  projetado?: string
 }
 
 export interface PontoCurva {
   mes: string
   realizado_no_mes: string
   realizado_acumulado: string
+  planejado_no_mes: string | null
   planejado_acumulado: string | null
+  projetado_no_mes: string
+  previsto_acumulado: string | null
 }
 
 export interface ResumoOrcamento {
   orcamento_aprovado: string | null
   total_orcado: string
   total_realizado: string
+  total_projetado: string
   saldo: string
   execucao: number | null
   avanco_fisico: number
-  previsao_final: string | null
+  previsao_final: string
+  previsao_ritmo: string | null
   itens: ItemOrcamento[]
   por_categoria: TotalOrcamento[]
   por_pilar: TotalOrcamento[]
